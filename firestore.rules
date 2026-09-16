@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Users collection rules:
+    // Allow users to read and write their own profile document
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) || (isSignedIn() && request.resource.data.uid == request.auth.uid);
+
+      // Sub-collection: transactions
+      match /transactions/{transactionId} {
+        allow read: if isSignedIn() && (request.auth.uid == userId);
+        allow write: if isSignedIn() && (request.auth.uid == userId);
+      }
+    }
+
+    // Educational credentials audit vault
+    match /user_vault/{userId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == userId);
+    }
+
+    // Fallback: Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

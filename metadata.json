@@ -1,0 +1,7 @@
+{
+  "name": "GOLDROBO - Robot Earning System",
+  "description": "AI-driven GOLDROBO crypto quantification platform with 3% daily yield, 40-day investment lock, instant profit withdrawals, and 8% L1 referral rewards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

