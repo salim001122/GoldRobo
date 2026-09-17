@@ -9,7 +9,8 @@ export const AssetsScreen: React.FC = () => {
     hideBalance, 
     toggleHideBalance, 
     openModal, 
-    sevenDayEarnings
+    sevenDayEarnings,
+    t
   } = useApp();
 
   const chartWidth = 320;
@@ -77,7 +78,7 @@ export const AssetsScreen: React.FC = () => {
           <div className="flex items-center justify-between text-sm py-0.5">
             <div className="flex items-center gap-1.5">
               <CoinLogo symbol="USDT" size="xs" />
-              <span className="text-slate-400 font-medium">Total Assets</span>
+              <span className="text-slate-400 font-medium">{t('total_assets', 'Total Assets')}</span>
             </div>
             <span className="font-bold text-white font-mono">
               {hideBalance ? '••••' : `$${userState.totalBalance.toFixed(2)} USDT`}
@@ -86,7 +87,7 @@ export const AssetsScreen: React.FC = () => {
 
           <div className="flex items-center justify-between text-sm py-0.5">
             <div className="flex items-center gap-1.5">
-              <span className="text-amber-300 font-medium">40-Day Locked Capital</span>
+              <span className="text-amber-300 font-medium">{t('locked_capital', '40-Day Locked Capital')}</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">
                 Day {userState.investmentDaysElapsed}/40
               </span>
@@ -98,7 +99,7 @@ export const AssetsScreen: React.FC = () => {
 
           <div className="flex items-center justify-between text-sm py-0.5">
             <div className="flex items-center gap-1.5">
-              <span className="text-emerald-400 font-medium">Withdrawable Profit</span>
+              <span className="text-emerald-400 font-medium">{t('withdrawable_profit', 'Withdrawable Profit')}</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono">
                 Anytime
               </span>
@@ -109,7 +110,7 @@ export const AssetsScreen: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-between text-sm py-0.5">
-            <span className="text-slate-400 font-medium">Deposit Bonus</span>
+            <span className="text-slate-400 font-medium">{t('deposit_bonus', 'Deposit Bonus')}</span>
             <span className="font-bold text-slate-300 font-mono">
               {hideBalance ? '••••' : `$${userState.bonusBalance.toFixed(2)} USDT`}
             </span>
@@ -130,7 +131,7 @@ export const AssetsScreen: React.FC = () => {
             className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
           >
             <ArrowDownToLine className="w-4 h-4" />
-            Deposit (+3% Bonus)
+            {t('deposit', 'Deposit')} (+3% Bonus)
           </button>
           <button
             id="assets-btn-withdraw"
@@ -138,7 +139,7 @@ export const AssetsScreen: React.FC = () => {
             className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs flex items-center justify-center gap-2 border border-slate-700 active:scale-95 transition-all"
           >
             <ArrowUpFromLine className="w-4 h-4" />
-            Withdraw Profit
+            {t('withdraw', 'Withdraw')}
           </button>
         </div>
 

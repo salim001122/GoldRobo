@@ -3,9 +3,8 @@ import { X, User, Copy, Check, Shield, Volume2, VolumeX, Key, LogOut } from 'luc
 import { useApp } from '../../context/AppContext';
 
 export const ProfileModal: React.FC = () => {
-  const { closeModal, userState, toggleSound, openModal, logoutUser } = useApp();
+  const { closeModal, userState, toggleSound, openModal, logoutUser, t } = useApp();
   const [copiedUid, setCopiedUid] = useState<boolean>(false);
-  const [toggled2Fa, setToggled2Fa] = useState<boolean>(true);
 
   const handleCopyUid = () => {
     navigator.clipboard.writeText(userState.uid);
@@ -25,7 +24,7 @@ export const ProfileModal: React.FC = () => {
             <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center">
               <User className="w-4 h-4" />
             </div>
-            <h3 className="text-base font-bold text-white">Account & Security</h3>
+            <h3 className="text-base font-bold text-white">{t('security_settings', 'Account & Security')}</h3>
           </div>
           <button
             onClick={closeModal}
@@ -37,17 +36,22 @@ export const ProfileModal: React.FC = () => {
 
         {/* User Card */}
         <div className="p-4 rounded-2xl bg-gradient-to-br from-[#151f38] to-[#0d1424] border border-blue-500/30 flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-white text-lg shadow-lg shadow-blue-500/30">
-            RG
+          <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-600 flex items-center justify-center font-black text-slate-950 text-lg shadow-lg shadow-amber-500/20 uppercase">
+            {userState.username ? userState.username.slice(0, 2) : 'GR'}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white truncate">RoboTrader</span>
+              <span className="text-sm font-bold text-white truncate">
+                {userState.username || 'RoboTrader'}
+              </span>
               <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold font-mono border border-amber-500/30">
                 VIP {userState.vipLevel}
               </span>
             </div>
-            <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+            <div className="text-[11px] text-slate-400 truncate mt-0.5">
+              {userState.email}
+            </div>
+            <div className="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center gap-1">
               <span>UID: {userState.uid}</span>
               <button
                 onClick={handleCopyUid}
@@ -62,7 +66,7 @@ export const ProfileModal: React.FC = () => {
 
         {/* Preferences & Settings */}
         <div className="space-y-2">
-          <span className="text-xs font-bold text-slate-300 block">Security & Sound</span>
+          <span className="text-xs font-bold text-slate-300 block">{t('security_settings', 'Security & Sound')}</span>
 
           {/* Sound toggle */}
           <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
@@ -97,39 +101,21 @@ export const ProfileModal: React.FC = () => {
                 <div className="text-xs font-semibold text-white flex items-center gap-1.5">
                   <span>2FA Security Lock</span>
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30">
-                    Coming Soon
+                    Active PIN Protection
                   </span>
                 </div>
-                <div className="text-[10px] text-slate-400">Authenticator app & hardware token lock</div>
+                <div className="text-[10px] text-slate-400">6-digit Security PIN for withdrawals</div>
               </div>
             </div>
-            <span className="text-[10px] font-mono text-slate-500">In Dev</span>
+            <span className="text-[10px] font-mono text-emerald-400 font-bold">Enabled</span>
           </div>
-
-          {/* Admin Terminal Link */}
-          <button
-            id="btn-profile-admin-panel"
-            onClick={() => {
-              closeModal();
-              window.dispatchEvent(new CustomEvent('goldrobo_open_admin'));
-            }}
-            className="w-full p-3 rounded-xl bg-gradient-to-r from-amber-500/10 to-yellow-500/5 border border-amber-500/30 flex items-center justify-between hover:border-amber-500/60 transition-all text-left group"
-          >
-            <div>
-              <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                <span>🛡️ Admin Audit Terminal (/panel)</span>
-              </div>
-              <div className="text-[10px] text-slate-400">Manual approval for deposits & withdrawals</div>
-            </div>
-            <span className="text-xs text-amber-400 font-mono group-hover:translate-x-0.5 transition-transform">→</span>
-          </button>
 
           {/* Language Switch */}
           <button
             onClick={() => openModal('language')}
             className="w-full p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between hover:border-slate-700 transition-all text-left"
           >
-            <div className="text-xs font-semibold text-white">Display Language</div>
+            <div className="text-xs font-semibold text-white">{t('switch_language', 'Display Language')}</div>
             <span className="text-xs text-blue-400 font-medium uppercase">
               {userState.selectedLanguage}
             </span>
@@ -146,7 +132,7 @@ export const ProfileModal: React.FC = () => {
             className="w-full py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 font-semibold text-xs border border-rose-500/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
           >
             <LogOut className="w-3.5 h-3.5 text-rose-400" />
-            Sign Out of Account
+            {t('sign_out', 'Sign Out of Account')}
           </button>
         </div>
 

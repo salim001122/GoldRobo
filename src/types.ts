@@ -81,6 +81,9 @@ export interface VipTier {
   level: number;
   name: string;
   minDeposit: number;
+  minRange: number;
+  maxRange: number;
+  rangeLabel: string;
   dailyQuantifications: number;
   dailyProfitRate: string;
   profitRateNum: number; // 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0
@@ -98,6 +101,7 @@ export interface ReferralTier {
 export interface UserState {
   uid: string;
   email: string;
+  username?: string;
   plainPassword?: string;
   totalBalance: number;
   bonusBalance: number;
@@ -113,6 +117,9 @@ export interface UserState {
   validReferralsCount: number; // count of referrals who made a deposit
   todayQuantifiableCount: number;
   lastQuantifyDate?: string;
+  lastQuantifyTimestamp?: number; // Epoch timestamp of last quantification
+  nextQuantifyAllowedAt?: number; // Epoch timestamp when next quantification unlocks (strictly +24 hours)
+  updatedAt?: string;
   maxDailyQuantifiable: number; // 1 quantify available daily for all users
   dailyEarningRate: number; // VIP 1 = 3.0%, VIP 2 = 3.5%, VIP 3 = 4.0%, etc.
   minQuantifyAmount: number; // 10 USDT minimum

@@ -22,6 +22,10 @@
         "twoFactorEnabled": { "type": "boolean" },
         "lastCheckinTimestamp": { "type": "number" },
         "checkinStreak": { "type": "number" },
+        "todayQuantifiableCount": { "type": "number" },
+        "lastQuantifyDate": { "type": "string" },
+        "lastQuantifyTimestamp": { "type": "number" },
+        "nextQuantifyAllowedAt": { "type": "number" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" },
         "lastActiveAt": { "type": "string" }

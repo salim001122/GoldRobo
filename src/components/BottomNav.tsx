@@ -3,7 +3,7 @@ import { Home, Wallet } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export const BottomNav: React.FC = () => {
-  const { activeTab, setActiveTab } = useApp();
+  const { activeTab, setActiveTab, t } = useApp();
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#070b16]/95 backdrop-blur-xl border-t border-slate-800/80 shadow-[0_-8px_20px_rgba(0,0,0,0.5)]">
@@ -24,7 +24,7 @@ export const BottomNav: React.FC = () => {
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-blue-400 rounded-full shadow-[0_0_6px_#60a5fa]" />
             )}
           </div>
-          <span className="text-[11px] font-medium tracking-wide">Home</span>
+          <span className="text-[11px] font-medium tracking-wide">{t('nav_home', 'Home')}</span>
         </button>
 
         {/* Center Floating Robot Action Tab */}
@@ -65,7 +65,7 @@ export const BottomNav: React.FC = () => {
           <span className={`text-[11px] font-medium tracking-wide mt-1.5 transition-colors ${
             activeTab === 'robot' ? 'text-amber-400 font-bold' : 'text-slate-400'
           }`}>
-            GOLDROBO
+            {t('nav_quantify', 'GOLDROBO')}
           </span>
         </div>
 
@@ -84,7 +84,7 @@ export const BottomNav: React.FC = () => {
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-blue-400 rounded-full shadow-[0_0_6px_#60a5fa]" />
             )}
           </div>
-          <span className="text-[11px] font-medium tracking-wide">Assets</span>
+          <span className="text-[11px] font-medium tracking-wide">{t('nav_assets', 'Assets')}</span>
         </button>
 
       </div>

@@ -284,25 +284,6 @@ export const HistoryModal: React.FC = () => {
             })
           )}
         </div>
-
-        {/* Footer Admin Audit Access Bar */}
-        <div className="p-3 bg-[#0a1122] border-t border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <span>Admin Review Required for Audits</span>
-          </div>
-          <button
-            id="btn-history-open-admin"
-            onClick={() => {
-              closeModal();
-              window.dispatchEvent(new CustomEvent('goldrobo_open_admin'));
-            }}
-            className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs border border-amber-500/40 transition-all flex items-center gap-1.5 active:scale-95"
-          >
-            <span>Audit Terminal (/panel)</span>
-            <span>→</span>
-          </button>
-        </div>
       </div>
     </div>
   );

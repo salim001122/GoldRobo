@@ -24,6 +24,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { formatCryptoPrice } from '../utils/cryptoApi';
 import { CoinLogo } from './CoinLogo';
+import { VIP_TIERS } from '../data/mockData';
 
 export const RobotScreen: React.FC = () => {
   const { 
@@ -36,7 +37,8 @@ export const RobotScreen: React.FC = () => {
     history, 
     startQuantification, 
     isQuantifying,
-    unlockMaturedInvestment
+    unlockMaturedInvestment,
+    t
   } = useApp();
 
   const [activeTimeframe, setActiveTimeframe] = useState<string>('1D');
@@ -48,7 +50,12 @@ export const RobotScreen: React.FC = () => {
   const [historyFilter, setHistoryFilter] = useState<'all' | 'quantify' | 'transfer'>('all');
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
-  // Digital countdown for daily reset
+  // Digital countdown for strict 24-hour quantification cooldown
+  const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
+  const lastTs = userState.lastQuantifyTimestamp || (userState.lastQuantifyDate ? new Date(userState.lastQuantifyDate).getTime() : 0);
+  const nextAllowedAt = userState.nextQuantifyAllowedAt || (lastTs > 0 ? (lastTs + COOLDOWN_24H_MS) : 0);
+  const isCooldownActive = lastTs > 0 && Date.now() < nextAllowedAt;
+
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
@@ -57,23 +64,24 @@ export const RobotScreen: React.FC = () => {
       const s = String(now.getSeconds()).padStart(2, '0');
       setCurrentTime(`${h}:${m}:${s} UTC`);
 
-      // Calculate remaining time until next midnight UTC (daily quota reset)
-      const nextUtcMidnight = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() + 1,
-        0, 0, 0
-      ));
-      const diffMs = Math.max(0, nextUtcMidnight.getTime() - now.getTime());
-      const remH = String(Math.floor(diffMs / (1000 * 60 * 60))).padStart(2, '0');
-      const remM = String(Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))).padStart(2, '0');
-      const remS = String(Math.floor((diffMs % (1000 * 60)) / 1000)).padStart(2, '0');
-      setTimeUntilReset(`${remH}:${remM}:${remS}`);
+      const nowMs = Date.now();
+      const currentLastTs = userState.lastQuantifyTimestamp || (userState.lastQuantifyDate ? new Date(userState.lastQuantifyDate).getTime() : 0);
+      const currentNextAllowed = userState.nextQuantifyAllowedAt || (currentLastTs > 0 ? (currentLastTs + COOLDOWN_24H_MS) : 0);
+
+      if (currentLastTs > 0 && nowMs < currentNextAllowed) {
+        const diffMs = Math.max(0, currentNextAllowed - nowMs);
+        const remH = String(Math.floor(diffMs / (1000 * 60 * 60))).padStart(2, '0');
+        const remM = String(Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))).padStart(2, '0');
+        const remS = String(Math.floor((diffMs % (1000 * 60)) / 1000)).padStart(2, '0');
+        setTimeUntilReset(`${remH}:${remM}:${remS}`);
+      } else {
+        setTimeUntilReset('00:00:00');
+      }
     };
     updateTime();
     const timer = setInterval(updateTime, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [userState.lastQuantifyTimestamp, userState.lastQuantifyDate, userState.nextQuantifyAllowedAt]);
 
   // Robot eye blinking animation cycle
   useEffect(() => {
@@ -91,16 +99,20 @@ export const RobotScreen: React.FC = () => {
         { time: '10:00', open: selectedCoin.price * 0.99, high: selectedCoin.price * 1.01, low: selectedCoin.price * 0.985, close: selectedCoin.price, volume: 1500 }
       ];
 
-  // Chart dimension bounds
+  // Chart dimension bounds with safe paddings to eliminate any candle or text overflow
   const minPrice = Math.min(...chartData.map(c => c.low)) * 0.998;
   const maxPrice = Math.max(...chartData.map(c => c.high)) * 1.002;
   const priceRange = maxPrice - minPrice || 1;
 
   const chartHeight = 165;
-  const chartWidth = 320;
+  const chartWidth = 340;
+  const topPadding = 16;
+  const bottomPadding = 30; // Room for volume and bottom time labels
+  const usableHeight = chartHeight - topPadding - bottomPadding;
 
   const getY = (val: number) => {
-    return chartHeight - ((val - minPrice) / priceRange) * (chartHeight - 35) - 18;
+    const raw = chartHeight - bottomPadding - ((val - minPrice) / priceRange) * usableHeight;
+    return Math.max(topPadding, Math.min(chartHeight - bottomPadding, raw));
   };
 
   const currentCandle = hoveredCandle !== null ? chartData[hoveredCandle] : chartData[chartData.length - 1];
@@ -357,7 +369,7 @@ export const RobotScreen: React.FC = () => {
       <div className="rounded-3xl bg-[#0d1424] border border-slate-800/80 p-4 shadow-xl space-y-3">
         
         {/* Timeframe selector */}
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+        <div className="flex flex-wrap items-center justify-between border-b border-slate-800/80 pb-2.5 gap-2">
           <div className="flex items-center gap-1">
             {timeframes.map((tf) => (
               <button
@@ -380,7 +392,7 @@ export const RobotScreen: React.FC = () => {
         </div>
 
         {/* Live Candlestick Canvas SVG */}
-        <div className="relative w-full h-[175px] bg-[#070b14] rounded-2xl p-2 flex items-center justify-center border border-slate-900 overflow-hidden">
+        <div className="relative w-full h-[180px] bg-[#070b14] rounded-2xl p-2 flex items-center justify-center border border-slate-900 overflow-hidden">
           
           {/* Subtle Grid Lines */}
           <div className="absolute inset-0 flex flex-col justify-between p-3 opacity-15 pointer-events-none">
@@ -390,9 +402,11 @@ export const RobotScreen: React.FC = () => {
           </div>
 
           {/* SVG Candlesticks */}
-          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-full overflow-visible">
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-full overflow-hidden select-none">
             {chartData.map((candle, idx) => {
-              const x = 20 + idx * ((chartWidth - 40) / (chartData.length - 1 || 1));
+              const leftMargin = 22;
+              const rightMargin = 22;
+              const x = leftMargin + idx * ((chartWidth - leftMargin - rightMargin) / Math.max(1, chartData.length - 1));
               const isGreen = candle.close >= candle.open;
               const candleColor = isGreen ? '#10b981' : '#f43f5e';
               const yHigh = getY(candle.high);
@@ -400,7 +414,7 @@ export const RobotScreen: React.FC = () => {
               const yOpen = getY(candle.open);
               const yClose = getY(candle.close);
               const bodyTop = Math.min(yOpen, yClose);
-              const bodyHeight = Math.max(3, Math.abs(yClose - yOpen));
+              const bodyHeight = Math.max(4, Math.abs(yClose - yOpen));
               const isHovered = hoveredCandle === idx;
 
               return (
@@ -417,36 +431,36 @@ export const RobotScreen: React.FC = () => {
                     x2={x} 
                     y2={yLow} 
                     stroke={candleColor} 
-                    strokeWidth={isHovered ? 2.5 : 1.5} 
+                    strokeWidth={isHovered ? 2 : 1.2} 
                   />
 
                   {/* Body */}
                   <rect
-                    x={x - (isHovered ? 8 : 6.5)}
+                    x={x - (isHovered ? 6 : 5)}
                     y={bodyTop}
-                    width={isHovered ? 16 : 13}
+                    width={isHovered ? 12 : 10}
                     height={bodyHeight}
-                    rx={2.5}
+                    rx={2}
                     fill={candleColor}
                     stroke={isHovered ? '#ffffff' : candleColor}
                     strokeWidth={isHovered ? 1.5 : 0.5}
                   />
 
-                  {/* Volume bar at bottom */}
+                  {/* Volume bar placed cleanly between candles and labels */}
                   <rect
-                    x={x - 4}
-                    y={chartHeight - Math.min(22, (candle.volume / 8000) * 22)}
-                    width={8}
-                    height={Math.min(22, (candle.volume / 8000) * 22)}
+                    x={x - 3}
+                    y={chartHeight - 28}
+                    width={6}
+                    height={Math.min(10, Math.max(2, (candle.volume / 8000) * 10))}
                     fill={isGreen ? '#10b981' : '#f43f5e'}
-                    opacity={0.35}
-                    rx={1.5}
+                    opacity={0.3}
+                    rx={1}
                   />
 
                   {/* Time label */}
                   <text
                     x={x}
-                    y={chartHeight - 1}
+                    y={chartHeight - 6}
                     fill={isHovered ? '#ffffff' : '#64748b'}
                     fontSize="8.5"
                     textAnchor="middle"
@@ -461,7 +475,7 @@ export const RobotScreen: React.FC = () => {
 
           {/* Hover Tooltip Overlay */}
           {currentCandle && (
-            <div className="absolute top-2 left-3 bg-[#0d1424]/90 border border-slate-700/80 rounded-xl px-2.5 py-1 text-[10px] font-mono text-slate-300 shadow-lg pointer-events-none flex items-center gap-3">
+            <div className="absolute top-2 left-3 bg-[#0d1424]/95 border border-slate-700/80 rounded-xl px-2.5 py-1 text-[10px] font-mono text-slate-300 shadow-lg pointer-events-none flex items-center gap-3">
               <div>Time: <span className="text-white font-bold">{currentCandle.time}</span></div>
               <div>Close: <span className="text-emerald-400 font-bold">${formatCryptoPrice(currentCandle.close)}</span></div>
             </div>
@@ -528,17 +542,23 @@ export const RobotScreen: React.FC = () => {
 
         {/* Balance & Profit Breakdown */}
         <div className="space-y-1.5 p-3 rounded-2xl bg-[#0d1424] border border-slate-800 text-xs font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Total Account Capital:</span>
+          <div className="flex items-center justify-between flex-wrap gap-1">
+            <span className="text-slate-400">Total Capital:</span>
             <span className="font-bold text-white">${userState.totalBalance.toFixed(2)} USDT</span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Withdrawable Profit (Anytime):</span>
+          <div className="flex items-center justify-between flex-wrap gap-1">
+            <span className="text-slate-400">Withdrawable Profit:</span>
             <span className="font-bold text-emerald-400">${userState.withdrawableBalance.toFixed(2)} USDT</span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Est. 1-Trade Profit (+{userState.dailyEarningRate.toFixed(1)}%):</span>
-            <span className="font-bold text-amber-300">
+          <div className="flex items-center justify-between flex-wrap gap-1">
+            <span className="text-slate-400">VIP {userState.vipLevel > 0 ? userState.vipLevel : 1} Range:</span>
+            <span className="font-bold text-amber-400">
+              {VIP_TIERS.find(v => v.level === userState.vipLevel)?.rangeLabel || '10 – 99 USDT'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between flex-wrap gap-1">
+            <span className="text-slate-400">Est. Daily Profit (+{userState.dailyEarningRate.toFixed(1)}%):</span>
+            <span className="font-bold text-emerald-400">
               +${((userState.lockedInvestment > 0 ? userState.lockedInvestment : userState.totalBalance) * (userState.dailyEarningRate / 100)).toFixed(2)} USDT
             </span>
           </div>
@@ -546,10 +566,10 @@ export const RobotScreen: React.FC = () => {
 
         {/* Real 40-Day Term Information & Unlock */}
         <div className="p-3 rounded-2xl bg-[#0b1120] border border-amber-500/20 space-y-2">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between text-xs flex-wrap gap-1">
             <span className="text-slate-300 font-bold flex items-center gap-1">
-              <Lock className="w-3.5 h-3.5 text-amber-400" />
-              40-Day Capital Lock Status
+              <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              40-Day Capital Lock
             </span>
             <span className="text-amber-400 font-mono font-bold text-[11px]">
               {userState.investmentDaysElapsed >= 40 ? 'Matured & Ready' : `${40 - userState.investmentDaysElapsed} Days Left`}
@@ -564,7 +584,7 @@ export const RobotScreen: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+          <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono flex-wrap gap-1">
             <span>Started: {userState.lockStartDate || '2026-09-14'}</span>
             <span>Principal: ${userState.lockedInvestment.toFixed(2)} USDT</span>
           </div>
@@ -574,19 +594,19 @@ export const RobotScreen: React.FC = () => {
               onClick={unlockMaturedInvestment}
               className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-xs tracking-wider shadow-lg shadow-emerald-500/25 active:scale-95 transition-all flex items-center justify-center gap-1.5"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              UNLOCK MATURED CAPITAL (${userState.lockedInvestment.toFixed(2)} USDT)
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span className="truncate">UNLOCK MATURED CAPITAL (${userState.lockedInvestment.toFixed(2)} USDT)</span>
             </button>
           )}
         </div>
 
         {/* Policy Highlights Pills */}
         <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-slate-300 space-y-1 leading-snug">
-          <div className="flex items-center justify-between font-semibold text-amber-300">
-            <span>🔒 40-Day Locked Capital Term</span>
+          <div className="flex items-center justify-between flex-wrap gap-1 font-semibold text-amber-300">
+            <span>🔒 40-Day Lock Term</span>
             <span>⚡ Profit Withdrawable Anytime</span>
           </div>
-          <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
+          <div className="text-[10px] text-slate-400 flex items-center justify-between flex-wrap gap-1 pt-0.5">
             <span>Min Quantify: $10 USDT</span>
             <span>Min Withdraw: $10 USDT (5% Fee)</span>
           </div>
@@ -596,64 +616,76 @@ export const RobotScreen: React.FC = () => {
         <button
           id="btn-start-quantifiable"
           onClick={() => startQuantification(selectedCoin.id)}
-          disabled={isQuantifying || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable || userState.totalBalance < 10}
-          className={`w-full py-4 rounded-2xl font-black text-sm tracking-wider transition-all shadow-xl flex items-center justify-center gap-2 ${
+          disabled={isQuantifying || isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable || userState.totalBalance < 10}
+          className={`w-full py-4 px-3 rounded-2xl font-black text-xs sm:text-sm tracking-wide transition-all shadow-xl flex items-center justify-center gap-2 ${
             userState.totalBalance < 10
               ? 'bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700'
-              : userState.todayQuantifiableCount >= userState.maxDailyQuantifiable
-              ? 'bg-slate-800/90 text-emerald-400 cursor-not-allowed border border-emerald-500/40'
+              : (isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable)
+              ? 'bg-slate-800/90 text-amber-300 cursor-not-allowed border border-amber-500/40 shadow-inner'
               : 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 hover:from-amber-400 hover:to-yellow-300 text-slate-950 shadow-amber-500/25 active:scale-[0.98]'
           }`}
         >
           {isQuantifying ? (
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 border-2 border-slate-950/40 border-t-slate-950 rounded-full animate-spin" />
-              <span>QUANTIFYING SPREAD (+{userState.dailyEarningRate.toFixed(1)}%)...</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-4 h-4 border-2 border-slate-950/40 border-t-slate-950 rounded-full animate-spin shrink-0" />
+              <span className="truncate">QUANTIFYING SPREAD (+{userState.dailyEarningRate.toFixed(1)}%)...</span>
             </div>
           ) : userState.totalBalance < 10 ? (
-            <span>MINIMUM 10 USDT REQUIRED TO QUANTIFY</span>
-          ) : userState.todayQuantifiableCount >= userState.maxDailyQuantifiable ? (
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>1/1 DAILY QUANTIFY DONE (+{userState.dailyEarningRate.toFixed(1)}% SECURED)</span>
+            <span className="text-center">MINIMUM 10 USDT REQUIRED TO QUANTIFY</span>
+          ) : (isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable) ? (
+            <div className="flex items-center gap-2 min-w-0">
+              <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+              <span className="truncate">24H COOLDOWN ACTIVE ({timeUntilReset})</span>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-slate-950" />
-              <span>START GOLDROBO (+{userState.dailyEarningRate.toFixed(1)}% TODAY)</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="w-4 h-4 text-slate-950 shrink-0" />
+              <span className="truncate">START GOLDROBO (+{userState.dailyEarningRate.toFixed(1)}% TODAY)</span>
             </div>
           )}
         </button>
 
       </div>
 
-      {/* Daily Reset Countdown - Only displayed after user has completed their daily quantify */}
-      {userState.todayQuantifiableCount >= userState.maxDailyQuantifiable && (
-        <div className="flex items-center justify-center py-1 animate-fadeIn">
-          <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#0d1424] border border-amber-500/30 shadow-[0_0_12px_rgba(234,179,8,0.15)]">
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-[11px] text-slate-400">Next Daily Quantify In:</span>
-            <span className="font-mono text-xs font-bold text-amber-300 tracking-wider">
+      {/* 24-Hour Cooldown Banner - Only displayed when in cooldown */}
+      {(isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable) && (
+        <div className="rounded-2xl bg-[#0d1424] border border-amber-500/40 p-3.5 shadow-lg space-y-2 animate-fadeIn">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-amber-400 font-bold flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-amber-400 animate-pulse" />
+              24-Hour Quantification Cooldown
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold text-[10px] border border-amber-500/30">
+              LOCKED
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-300">Next Quantify Unlocks In:</span>
+            <span className="font-mono text-base font-black text-amber-300 tracking-wider">
               {timeUntilReset}
             </span>
+          </div>
+          <div className="text-[10px] text-slate-400 flex items-center justify-between border-t border-slate-800/80 pt-1.5 font-mono">
+            <span>Cooldown: Strictly 24 Hours</span>
+            <span className="text-emerald-400 font-semibold">Balance & Profit Protected</span>
           </div>
         </div>
       )}
 
       {/* Re-designed Ledger-Style Real Trade History Section */}
       <div className="rounded-3xl bg-[#0d1424] border border-slate-800 p-4 shadow-xl space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className="text-sm font-bold text-white tracking-wide">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="min-w-0">
+            <h4 className="text-sm font-bold text-white tracking-wide truncate">
               Arbitrage & Settlement Ledger
             </h4>
-            <span className="text-[11px] text-slate-400">
+            <span className="text-[11px] text-slate-400 block truncate">
               Verified on-chain & internal matching records
             </span>
           </div>
 
           {/* History filter toggle */}
-          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0">
             <button
               onClick={() => setHistoryFilter('all')}
               className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all ${
@@ -703,19 +735,19 @@ export const RobotScreen: React.FC = () => {
                 <div
                   key={item.id}
                   id={`ledger-${item.id}`}
-                  className="p-3.5 rounded-2xl bg-[#090e1a] border border-slate-800/90 hover:border-amber-500/40 transition-all space-y-2"
+                  className="p-3.5 rounded-2xl bg-[#090e1a] border border-slate-800/90 hover:border-amber-500/40 transition-all space-y-2 overflow-hidden"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${
                         item.status === 'Completed' ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
                       }`} />
-                      <span className="text-xs font-bold text-white">
+                      <span className="text-xs font-bold text-white truncate">
                         {item.coinName}
                       </span>
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
                       <span className={`text-xs font-black font-mono ${
                         isProfit ? 'text-emerald-400' : 'text-rose-400'
                       }`}>
@@ -724,32 +756,32 @@ export const RobotScreen: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 pt-0.5">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 pt-0.5 flex-wrap gap-1">
+                    <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                       <span>{item.dateStr} {item.timeStr}</span>
                       {item.profitPercent > 0 && (
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
-                          +{item.profitPercent.toFixed(1)}% Yield
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30 whitespace-nowrap text-[10px]">
+                          +{item.profitPercent.toFixed(1)}%
                         </span>
                       )}
                     </div>
-                    <div className="text-slate-300 font-semibold">
+                    <div className="text-slate-300 font-semibold shrink-0">
                       Bal: ${item.balanceAfter.toFixed(2)}
                     </div>
                   </div>
 
                   {/* Order ID & Tx Details Footer */}
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono pt-1.5 border-t border-slate-800/60">
-                    <div className="truncate max-w-[170px] text-slate-400">
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono pt-1.5 border-t border-slate-800/60 gap-2">
+                    <div className="truncate min-w-0 flex-1 text-slate-400">
                       ID: {item.orderId || item.id}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <span className="text-slate-400">{item.network || 'TRC20'}</span>
                       {item.txHash && (
                         <button
                           onClick={() => handleCopy(item.txHash || '')}
-                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-0.5 hover:underline"
+                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-0.5 hover:underline shrink-0"
                           title="Copy Transaction Hash"
                         >
                           {copiedHash === item.txHash ? (

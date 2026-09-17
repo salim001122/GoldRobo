@@ -13,7 +13,8 @@ import {
   INITIAL_TRADE_HISTORY,
   INITIAL_USER_STATE,
   INITIAL_7D_EARNINGS,
-  VIP_TIERS
+  VIP_TIERS,
+  getVipTierForAmount
 } from '../data/mockData';
 import { playClickSound, playSuccessSound, playRobotScanningSound } from '../utils/audio';
 import { fetchLiveCryptoPrices, fetchRealKlines } from '../utils/cryptoApi';
@@ -24,9 +25,11 @@ import {
   recordTransactionToFirestore, 
   onAuthStateChanged,
   fetchUserProfileFromFirestore,
-  fetchUserTransactionsFromFirestore
+  fetchUserTransactionsFromFirestore,
+  subscribeToUserProfile
 } from '../utils/firebase';
 import { saveSystemTransaction } from '../utils/adminTransactions';
+import { getTranslation } from '../utils/translations';
 
 interface AppContextType {
   activeTab: NavigationTab;
@@ -42,6 +45,7 @@ interface AppContextType {
   loginUser: (userData: { 
     uid: string; 
     email: string; 
+    username?: string;
     referralCode?: string; 
     securityPin?: string;
     sponsorCode?: string;
@@ -68,6 +72,7 @@ interface AppContextType {
   upgradeVipLevel: (level: number) => { success: boolean; message: string };
   unlockMaturedInvestment: () => { success: boolean; message: string };
   setLanguage: (lang: string) => void;
+  t: (key: string, fallback?: string) => string;
   toggleSound: () => void;
   claimedBonuses: number[];
   completedTasks: string[];
@@ -107,24 +112,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const saved = localStorage.getItem(STORAGE_KEY_USER);
       if (saved) {
         const parsed = JSON.parse(saved);
-        const todayDateStr = new Date().toISOString().split('T')[0];
-        const isNewDay = parsed.lastQuantifyDate !== todayDateStr;
+        const nowMs = Date.now();
+        const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000; // Strict 24 hours (86,400,000 ms)
+
+        // Strict 24-Hour Cooldown Calculation
+        const lastQuantifyMs = parsed.lastQuantifyTimestamp || (parsed.lastQuantifyDate ? new Date(parsed.lastQuantifyDate).getTime() : 0);
+        const nextAllowedMs = parsed.nextQuantifyAllowedAt || (lastQuantifyMs > 0 ? (lastQuantifyMs + COOLDOWN_24H_MS) : 0);
+
+        // Cooldown is strictly active if within 24 hours of last quantify timestamp
+        const isCooldownActive = lastQuantifyMs > 0 && nowMs < nextAllowedMs;
+        const effectiveCount = isCooldownActive ? 1 : 0;
+
         const totalBal = parsed.totalBalance ?? 0.00;
-        const vipLevel = parsed.vipLevel !== undefined ? parsed.vipLevel : (totalBal >= 10 ? 1 : 0);
-        const matchingTier = VIP_TIERS.find(v => v.level === vipLevel);
+        const lockedBal = parsed.lockedInvestment ?? 0.00;
+        const activeCap = lockedBal > 0 ? lockedBal : totalBal;
+        const rangeTier = getVipTierForAmount(activeCap);
+        const vipLevel = parsed.vipLevel !== undefined ? parsed.vipLevel : (rangeTier ? rangeTier.level : (totalBal >= 10 ? 1 : 0));
+        const matchingTier = VIP_TIERS.find(v => v.level === vipLevel) || rangeTier;
         return {
           ...INITIAL_USER_STATE,
           ...parsed,
           maxDailyQuantifiable: 1, // 1 quantify daily for all users
-          todayQuantifiableCount: isNewDay ? 0 : (parsed.todayQuantifiableCount || 0),
-          lastQuantifyDate: isNewDay ? todayDateStr : (parsed.lastQuantifyDate || todayDateStr),
+          todayQuantifiableCount: effectiveCount,
+          lastQuantifyTimestamp: lastQuantifyMs,
+          nextQuantifyAllowedAt: isCooldownActive ? nextAllowedMs : 0,
+          lastQuantifyDate: parsed.lastQuantifyDate || (lastQuantifyMs ? new Date(lastQuantifyMs).toISOString() : ''),
+          totalBalance: totalBal,
+          withdrawableBalance: parsed.withdrawableBalance ?? 0.00,
+          lockedInvestment: lockedBal,
           vipLevel,
           dailyEarningRate: vipLevel > 0 ? (matchingTier ? matchingTier.profitRateNum : 3.0) : 0.0,
           minQuantifyAmount: 10.00,
           minWithdrawAmount: 10.00,
           withdrawFeeRate: 0.05,
           investmentLockDays: 40,
-          lockedInvestment: parsed.lockedInvestment !== undefined ? parsed.lockedInvestment : 0.00,
           investmentDaysElapsed: parsed.investmentDaysElapsed !== undefined ? parsed.investmentDaysElapsed : 0,
           validReferralsCount: parsed.validReferralsCount !== undefined ? parsed.validReferralsCount : 0,
           apiKey: parsed.apiKey || 'binance_live_gateway_v3_secure',
@@ -202,6 +223,135 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, [completedTasks]);
 
+  // Real-time listener for Cloud Firestore user profile document
+  // Automatically syncs balance when adjusted directly in Firebase Console or by Admin
+  useEffect(() => {
+    if (!userState.uid) return;
+
+    const unsubscribe = subscribeToUserProfile(userState.uid, (remoteProfile) => {
+      if (!remoteProfile) return;
+
+      setUserState(prev => {
+        // Protect user's balance and profit from stale/zero overwrite
+        const remoteTotal = remoteProfile.totalBalance !== undefined && remoteProfile.totalBalance !== null
+          ? +Number(remoteProfile.totalBalance).toFixed(2)
+          : undefined;
+        const remoteWithdrawable = remoteProfile.withdrawableBalance !== undefined && remoteProfile.withdrawableBalance !== null
+          ? +Number(remoteProfile.withdrawableBalance).toFixed(2)
+          : undefined;
+        const remoteLocked = remoteProfile.lockedInvestment !== undefined && remoteProfile.lockedInvestment !== null
+          ? +Number(remoteProfile.lockedInvestment).toFixed(2)
+          : undefined;
+        const remoteBonus = remoteProfile.bonusBalance !== undefined && remoteProfile.bonusBalance !== null
+          ? +Number(remoteProfile.bonusBalance).toFixed(2)
+          : undefined;
+
+        // Compare update timestamps
+        const remoteUpdatedAt = remoteProfile.updatedAt ? new Date(remoteProfile.updatedAt).getTime() : 0;
+        const localUpdatedAt = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+        const isRemoteNewer = remoteUpdatedAt > localUpdatedAt;
+
+        let updatedTotal = prev.totalBalance;
+        let updatedWithdrawable = prev.withdrawableBalance;
+        let updatedLocked = prev.lockedInvestment;
+        let updatedBonus = prev.bonusBalance;
+
+        if (isRemoteNewer) {
+          if (remoteTotal !== undefined) updatedTotal = remoteTotal;
+          if (remoteWithdrawable !== undefined) updatedWithdrawable = remoteWithdrawable;
+          if (remoteLocked !== undefined) updatedLocked = remoteLocked;
+          if (remoteBonus !== undefined) updatedBonus = remoteBonus;
+        } else {
+          // Never overwrite an existing positive balance with 0 on refresh
+          if (remoteTotal !== undefined) {
+            updatedTotal = (remoteTotal > 0 || prev.totalBalance === 0) ? Math.max(remoteTotal, prev.totalBalance) : prev.totalBalance;
+          }
+          if (remoteWithdrawable !== undefined) {
+            updatedWithdrawable = (remoteWithdrawable > 0 || prev.withdrawableBalance === 0) ? Math.max(remoteWithdrawable, prev.withdrawableBalance) : prev.withdrawableBalance;
+          }
+          if (remoteLocked !== undefined) {
+            updatedLocked = (remoteLocked > 0 || prev.lockedInvestment === 0) ? Math.max(remoteLocked, prev.lockedInvestment) : prev.lockedInvestment;
+          }
+          if (remoteBonus !== undefined) {
+            updatedBonus = Math.max(remoteBonus, prev.bonusBalance);
+          }
+        }
+
+        const effectiveCapital = updatedLocked > 0 ? updatedLocked : updatedTotal;
+        const rangeTier = getVipTierForAmount(effectiveCapital);
+
+        const effectiveVip = remoteProfile.vipLevel !== undefined 
+          ? Number(remoteProfile.vipLevel) 
+          : (rangeTier ? rangeTier.level : (updatedTotal >= 10 ? 1 : prev.vipLevel));
+        const matchingTier = VIP_TIERS.find(v => v.level === effectiveVip) || rangeTier;
+        const effectiveDailyRate = remoteProfile.dailyEarningRate !== undefined 
+          ? Number(remoteProfile.dailyEarningRate) 
+          : (matchingTier ? matchingTier.profitRateNum : (effectiveVip > 0 ? 3.0 : 0.0));
+
+        const updatedReferrals = remoteProfile.validReferralsCount !== undefined 
+          ? Number(remoteProfile.validReferralsCount) 
+          : prev.validReferralsCount;
+
+        // Strict 24h Cooldown State Preservation
+        const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
+        const nowMs = Date.now();
+        const remoteLastTs = remoteProfile.lastQuantifyTimestamp || (remoteProfile.lastQuantifyDate ? new Date(remoteProfile.lastQuantifyDate).getTime() : 0);
+        const localLastTs = prev.lastQuantifyTimestamp || (prev.lastQuantifyDate ? new Date(prev.lastQuantifyDate).getTime() : 0);
+        const effectiveLastTs = Math.max(remoteLastTs, localLastTs);
+        const effectiveNextAllowed = Math.max(
+          remoteProfile.nextQuantifyAllowedAt || 0,
+          prev.nextQuantifyAllowedAt || 0,
+          effectiveLastTs > 0 ? (effectiveLastTs + COOLDOWN_24H_MS) : 0
+        );
+        const isCooldownActive = effectiveLastTs > 0 && nowMs < effectiveNextAllowed;
+
+        return {
+          ...prev,
+          totalBalance: updatedTotal,
+          withdrawableBalance: updatedWithdrawable,
+          lockedInvestment: updatedLocked,
+          bonusBalance: updatedBonus,
+          vipLevel: effectiveVip,
+          dailyEarningRate: effectiveDailyRate,
+          validReferralsCount: updatedReferrals,
+          lastQuantifyTimestamp: effectiveLastTs,
+          nextQuantifyAllowedAt: isCooldownActive ? effectiveNextAllowed : 0,
+          todayQuantifiableCount: isCooldownActive ? 1 : 0,
+          lastQuantifyDate: effectiveLastTs > 0 ? new Date(effectiveLastTs).toISOString() : prev.lastQuantifyDate,
+          username: remoteProfile.username || prev.username,
+          selectedLanguage: remoteProfile.selectedLanguage || prev.selectedLanguage,
+          sponsorCode: remoteProfile.sponsorCode || prev.sponsorCode,
+          referralCode: remoteProfile.referralCode || prev.referralCode,
+          securityPin: remoteProfile.securityPin || prev.securityPin,
+          twoFactorEnabled: remoteProfile.twoFactorEnabled !== undefined ? !!remoteProfile.twoFactorEnabled : prev.twoFactorEnabled,
+          hasReceivedFirstDepositBonus: remoteProfile.hasReceivedFirstDepositBonus !== undefined ? !!remoteProfile.hasReceivedFirstDepositBonus : prev.hasReceivedFirstDepositBonus,
+          canClaimFirstDepositBonus: remoteProfile.canClaimFirstDepositBonus !== undefined ? !!remoteProfile.canClaimFirstDepositBonus : prev.canClaimFirstDepositBonus,
+          firstDepositBonusAmount: remoteProfile.firstDepositBonusAmount !== undefined ? Number(remoteProfile.firstDepositBonusAmount) : prev.firstDepositBonusAmount,
+          hasReceived5RefBonus: remoteProfile.hasReceived5RefBonus !== undefined ? !!remoteProfile.hasReceived5RefBonus : prev.hasReceived5RefBonus,
+          checkinStreak: remoteProfile.checkinStreak !== undefined ? Number(remoteProfile.checkinStreak) : prev.checkinStreak,
+          lastCheckinTimestamp: remoteProfile.lastCheckinTimestamp || prev.lastCheckinTimestamp
+        };
+      });
+    });
+
+    return () => unsubscribe();
+  }, [userState.uid]);
+
+  // Listener for real-time team referral counts
+  useEffect(() => {
+    const handleRefUpdated = (e: any) => {
+      const count = e.detail?.validReferralsCount;
+      if (typeof count === 'number') {
+        setUserState(prev => ({
+          ...prev,
+          validReferralsCount: count
+        }));
+      }
+    };
+    window.addEventListener('goldrobo_referral_updated', handleRefUpdated);
+    return () => window.removeEventListener('goldrobo_referral_updated', handleRefUpdated);
+  }, []);
+
   // Live listener for Administrator approvals or rejections from /panel
   useEffect(() => {
     const handleSystemTxUpdated = (e: any) => {
@@ -231,20 +381,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return newArr;
       });
 
-      if (shouldCreditDeposit) {
+      if (shouldCreditDeposit && depositAmount > 0) {
         setUserState(prevUser => {
           const isFirstDeposit = !prevUser.hasReceivedFirstDepositBonus && !prevUser.canClaimFirstDepositBonus;
           const bonusAmount = isFirstDeposit ? +(depositAmount * 0.03).toFixed(2) : 0;
           const newTotal = +(prevUser.totalBalance + depositAmount).toFixed(2);
           const newLocked = +(prevUser.lockedInvestment + depositAmount).toFixed(2);
-          const shouldUnlockVip1 = (prevUser.vipLevel === 0 || !prevUser.vipLevel) && newTotal >= 10;
+          const activeCap = newLocked > 0 ? newLocked : newTotal;
+          const targetTier = getVipTierForAmount(activeCap);
+          const targetVip = targetTier ? targetTier.level : (newTotal >= 10 ? 1 : prevUser.vipLevel);
+          // Never downgrade; upgrade forward if qualifying
+          const nextVip = Math.max(prevUser.vipLevel || 0, targetVip);
+          const targetTierConfig = VIP_TIERS.find(v => v.level === nextVip);
+          const nextRate = targetTierConfig ? targetTierConfig.profitRateNum : (nextVip > 0 ? 3.0 : 0.0);
 
           const next = {
             ...prevUser,
             totalBalance: newTotal,
             lockedInvestment: newLocked,
-            vipLevel: shouldUnlockVip1 ? 1 : prevUser.vipLevel,
-            dailyEarningRate: shouldUnlockVip1 ? 3.0 : prevUser.dailyEarningRate,
+            vipLevel: nextVip,
+            dailyEarningRate: nextRate,
             canClaimFirstDepositBonus: isFirstDeposit,
             firstDepositBonusAmount: isFirstDeposit ? bonusAmount : prevUser.firstDepositBonusAmount,
             lockStartDate: prevUser.lockStartDate || new Date().toISOString().split('T')[0]
@@ -266,7 +422,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try { confetti({ particleCount: 50, spread: 60 }); } catch {}
       }
 
-      if (shouldRefundWithdraw) {
+      if (shouldRefundWithdraw && refundAmount > 0) {
         setUserState(prevUser => {
           const newTotal = +(prevUser.totalBalance + refundAmount).toFixed(2);
           const newWithdrawable = +(prevUser.withdrawableBalance + refundAmount).toFixed(2);
@@ -425,15 +581,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setLanguage = (lang: string) => {
     setUserState(prev => ({ ...prev, selectedLanguage: lang }));
+    try {
+      localStorage.setItem('goldrobo_selected_lang', lang);
+    } catch {}
+    if (userState.uid) {
+      syncUserProfileToFirestore(userState.uid, { selectedLanguage: lang });
+    }
   };
+
+  const t = useCallback((key: string, fallback?: string): string => {
+    return getTranslation(key, userState.selectedLanguage, fallback);
+  }, [userState.selectedLanguage]);
 
   // Run Robot Quantification with VIP-based profit rate
   const startQuantification = (coinId?: string) => {
     if (isQuantifying) return;
     
-    // Check if daily quota reached (1 quantify per day)
+    // Strict 24-Hour Rule: Must wait 24 hours between quantifications
+    const nowMs = Date.now();
+    const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000; // 86,400,000 ms = strictly 24 hours
+    const lastTs = userState.lastQuantifyTimestamp || (userState.lastQuantifyDate ? new Date(userState.lastQuantifyDate).getTime() : 0);
+    const nextAllowedAt = userState.nextQuantifyAllowedAt || (lastTs > 0 ? (lastTs + COOLDOWN_24H_MS) : 0);
+
+    if (lastTs > 0 && nowMs < nextAllowedAt) {
+      const remainingMs = nextAllowedAt - nowMs;
+      const remH = Math.floor(remainingMs / (1000 * 60 * 60));
+      const remM = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+      const remS = Math.floor((remainingMs % (1000 * 60)) / 1000);
+      alert(`Strict 24-Hour Rule: Quantification is locked for 24 hours. Your next quantification unlocks in ${remH}h ${remM}m ${remS}s.`);
+      return;
+    }
+
+    // Check if daily quota reached (1 quantify per 24 hours)
     if (userState.todayQuantifiableCount >= userState.maxDailyQuantifiable) {
-      alert(`Daily limit reached! You have executed your daily quantification (${userState.todayQuantifiableCount}/${userState.maxDailyQuantifiable}). Next quantify quota resets at 00:00 UTC.`);
+      alert('Daily quantification limit reached! Please wait for your 24-hour cooldown timer to complete.');
       return;
     }
 
@@ -476,23 +657,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         origin: { y: 0.6 }
       });
 
-      // Profit rate dynamically determined by VIP Level
-      // VIP 1 = 3.0%, VIP 2 = 3.5%, VIP 3 = 4.0%, VIP 4 = 4.5%, VIP 5 = 5.0%, etc.
-      const currentVip = VIP_TIERS.find(v => v.level === userState.vipLevel);
-      const profitRate = currentVip ? currentVip.profitRateNum : 3.00;
+      // Profit rate dynamically determined by VIP Level and invested capital
+      // VIP 1 (10-99 USDT): 3.0%, VIP 2 (100-499 USDT): 3.5%, VIP 3 (500-1999 USDT): 4.0%, etc.
+      const currentVip = VIP_TIERS.find(v => v.level === userState.vipLevel) || getVipTierForAmount(activeCapital);
+      const profitRate = currentVip ? currentVip.profitRateNum : (userState.dailyEarningRate || 3.00);
       const profitAmount = +(activeCapital * (profitRate / 100)).toFixed(2);
       
       const newTotal = +(userState.totalBalance + profitAmount).toFixed(2);
       const newWithdrawable = +(userState.withdrawableBalance + profitAmount).toFixed(2);
-      const newCount = userState.todayQuantifiableCount + 1;
+      const completedTime = Date.now();
+      const nextAllowedTime = completedTime + 24 * 60 * 60 * 1000; // Strict 24 hours cooldown
+      const nowIso = new Date(completedTime).toISOString();
+      const newCount = 1;
 
-      setUserState(prev => ({
-        ...prev,
+      const updatePayload = {
         totalBalance: newTotal,
         withdrawableBalance: newWithdrawable,
         todayQuantifiableCount: newCount,
-        dailyEarningRate: profitRate
+        dailyEarningRate: profitRate,
+        lastQuantifyDate: nowIso,
+        lastQuantifyTimestamp: completedTime,
+        nextQuantifyAllowedAt: nextAllowedTime,
+        updatedAt: nowIso
+      };
+
+      setUserState(prev => ({
+        ...prev,
+        ...updatePayload
       }));
+
+      // Immediately sync balance and quantify state with Cloud Firestore
+      syncUserProfileToFirestore(userState.uid, updatePayload);
 
       const now = new Date();
       const dateStr = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`;
@@ -503,7 +698,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         timestamp: now.toISOString(),
         dateStr,
         timeStr,
-        coinName: `${targetCoin.symbol} / USDT Quantify (VIP ${userState.vipLevel})`,
+        coinName: `${targetCoin.symbol} / USDT Quantify (${currentVip?.name || 'VIP ' + userState.vipLevel})`,
         profitPercent: profitRate,
         quantifyIndex: `${newCount}/${userState.maxDailyQuantifiable}`,
         profitAmount,
@@ -513,10 +708,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         txHash: `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 10)}`,
         orderId: `ROBO-${targetCoin.symbol}-${Date.now().toString().slice(-6)}`,
         network: 'USDT (TRC20)',
-        nodeRoute: `Binance VIP Liquidity Node #${userState.vipLevel}`
+        nodeRoute: `Binance VIP Liquidity Node #${currentVip?.level || userState.vipLevel || 1}`
       };
 
       setHistory(prev => [newHistoryItem, ...prev]);
+      recordTransactionToFirestore(userState.uid, newHistoryItem);
 
       // Update 7d earnings
       setSevenDayEarnings(prev => {
@@ -538,16 +734,113 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 3600);
   };
 
-  // Listen for Firebase Auth changes
+  // Listen for Firebase Auth changes & immediately sync latest Firestore profile
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         setIsAuthenticated(true);
-        setUserState(prev => ({
-          ...prev,
-          uid: fbUser.uid,
-          email: fbUser.email || prev.email
-        }));
+        try {
+          const remoteProfile = await fetchUserProfileFromFirestore(fbUser.uid);
+          if (remoteProfile) {
+            setUserState(prev => {
+              // Remote balances vs local balances: prevent stale/zero overwriting
+              const remoteTotal = remoteProfile.totalBalance !== undefined && remoteProfile.totalBalance !== null
+                ? +Number(remoteProfile.totalBalance).toFixed(2)
+                : undefined;
+              const remoteWithdrawable = remoteProfile.withdrawableBalance !== undefined && remoteProfile.withdrawableBalance !== null
+                ? +Number(remoteProfile.withdrawableBalance).toFixed(2)
+                : undefined;
+              const remoteLocked = remoteProfile.lockedInvestment !== undefined && remoteProfile.lockedInvestment !== null
+                ? +Number(remoteProfile.lockedInvestment).toFixed(2)
+                : undefined;
+
+              const remoteUpdatedAt = remoteProfile.updatedAt ? new Date(remoteProfile.updatedAt).getTime() : 0;
+              const localUpdatedAt = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+              const isRemoteNewer = remoteUpdatedAt > localUpdatedAt;
+
+              let totalBal = prev.totalBalance;
+              let withdrawableBal = prev.withdrawableBalance;
+              let lockedBal = prev.lockedInvestment;
+
+              if (isRemoteNewer) {
+                if (remoteTotal !== undefined) totalBal = remoteTotal;
+                if (remoteWithdrawable !== undefined) withdrawableBal = remoteWithdrawable;
+                if (remoteLocked !== undefined) lockedBal = remoteLocked;
+              } else {
+                if (remoteTotal !== undefined) {
+                  totalBal = (remoteTotal > 0 || prev.totalBalance === 0) ? Math.max(remoteTotal, prev.totalBalance) : prev.totalBalance;
+                }
+                if (remoteWithdrawable !== undefined) {
+                  withdrawableBal = (remoteWithdrawable > 0 || prev.withdrawableBalance === 0) ? Math.max(remoteWithdrawable, prev.withdrawableBalance) : prev.withdrawableBalance;
+                }
+                if (remoteLocked !== undefined) {
+                  lockedBal = (remoteLocked > 0 || prev.lockedInvestment === 0) ? Math.max(remoteLocked, prev.lockedInvestment) : prev.lockedInvestment;
+                }
+              }
+
+              // Strict 24-Hour Cooldown Synchronization
+              const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
+              const nowMs = Date.now();
+              const remoteLastTs = remoteProfile.lastQuantifyTimestamp || (remoteProfile.lastQuantifyDate ? new Date(remoteProfile.lastQuantifyDate).getTime() : 0);
+              const localLastTs = prev.lastQuantifyTimestamp || (prev.lastQuantifyDate ? new Date(prev.lastQuantifyDate).getTime() : 0);
+              const effectiveLastTs = Math.max(remoteLastTs, localLastTs);
+              const effectiveNextAllowed = Math.max(
+                remoteProfile.nextQuantifyAllowedAt || 0,
+                prev.nextQuantifyAllowedAt || 0,
+                effectiveLastTs > 0 ? (effectiveLastTs + COOLDOWN_24H_MS) : 0
+              );
+              const isCooldownActive = effectiveLastTs > 0 && nowMs < effectiveNextAllowed;
+
+              const activeCap = lockedBal > 0 ? lockedBal : totalBal;
+              const rangeTier = getVipTierForAmount(activeCap);
+              const vipLvl = remoteProfile.vipLevel !== undefined 
+                ? Number(remoteProfile.vipLevel) 
+                : (rangeTier ? rangeTier.level : (totalBal >= 10 ? 1 : 0));
+              const tier = VIP_TIERS.find(v => v.level === vipLvl) || rangeTier;
+
+              // If local had a higher balance, sync it up to Firestore
+              if (prev.totalBalance > (remoteProfile.totalBalance || 0) || prev.withdrawableBalance > (remoteProfile.withdrawableBalance || 0)) {
+                syncUserProfileToFirestore(fbUser.uid, {
+                  totalBalance: totalBal,
+                  withdrawableBalance: withdrawableBal,
+                  lockedInvestment: lockedBal,
+                  lastQuantifyTimestamp: effectiveLastTs,
+                  nextQuantifyAllowedAt: isCooldownActive ? effectiveNextAllowed : 0,
+                  todayQuantifiableCount: isCooldownActive ? 1 : 0,
+                  updatedAt: new Date().toISOString()
+                });
+              }
+
+              return {
+                ...prev,
+                uid: fbUser.uid,
+                email: fbUser.email || prev.email,
+                totalBalance: totalBal,
+                withdrawableBalance: withdrawableBal,
+                lockedInvestment: lockedBal,
+                bonusBalance: +(remoteProfile.bonusBalance ?? prev.bonusBalance),
+                vipLevel: vipLvl,
+                dailyEarningRate: remoteProfile.dailyEarningRate !== undefined ? Number(remoteProfile.dailyEarningRate) : (tier ? tier.profitRateNum : (vipLvl > 0 ? 3.0 : 0.0)),
+                validReferralsCount: remoteProfile.validReferralsCount !== undefined ? Number(remoteProfile.validReferralsCount) : prev.validReferralsCount,
+                lastQuantifyTimestamp: effectiveLastTs,
+                nextQuantifyAllowedAt: isCooldownActive ? effectiveNextAllowed : 0,
+                todayQuantifiableCount: isCooldownActive ? 1 : 0,
+                lastQuantifyDate: effectiveLastTs > 0 ? new Date(effectiveLastTs).toISOString() : prev.lastQuantifyDate,
+                referralCode: remoteProfile.referralCode || prev.referralCode,
+                sponsorCode: remoteProfile.sponsorCode || prev.sponsorCode,
+                securityPin: remoteProfile.securityPin || prev.securityPin
+              };
+            });
+          } else {
+            setUserState(prev => ({
+              ...prev,
+              uid: fbUser.uid,
+              email: fbUser.email || prev.email
+            }));
+          }
+        } catch (err: any) {
+          console.warn('Initial auth sync note:', err?.message);
+        }
       }
     });
     return () => unsubscribe();
@@ -556,6 +849,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const loginUser = async (userData: { 
     uid: string; 
     email: string; 
+    username?: string;
     referralCode?: string; 
     securityPin?: string; 
     sponsorCode?: string; 
@@ -573,44 +867,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const remoteProfile = await fetchUserProfileFromFirestore(userData.uid);
       const remoteHistory = await fetchUserTransactionsFromFirestore(userData.uid);
 
-      const todayDateStr = new Date().toISOString().split('T')[0];
-      const remoteQuantifyDate = remoteProfile?.lastQuantifyDate || '';
-      const isNewDay = remoteQuantifyDate !== todayDateStr;
-      const effectiveTodayCount = isNewDay ? 0 : (remoteProfile?.todayQuantifiableCount ?? 0);
+      // Strict 24-Hour Cooldown Verification
+      const nowMs = Date.now();
+      const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
+      const remoteLastTs = remoteProfile?.lastQuantifyTimestamp || (remoteProfile?.lastQuantifyDate ? new Date(remoteProfile.lastQuantifyDate).getTime() : 0);
+      const remoteNextAllowed = remoteProfile?.nextQuantifyAllowedAt || (remoteLastTs > 0 ? (remoteLastTs + COOLDOWN_24H_MS) : 0);
+      const isCooldownActive = remoteLastTs > 0 && nowMs < remoteNextAllowed;
+      const effectiveTodayCount = isCooldownActive ? 1 : 0;
 
-      const effectiveTotalBalance = remoteProfile?.totalBalance ?? (userData.totalBalance ?? 0.00);
+      const effectiveTotalBalance = remoteProfile?.totalBalance ?? (userData.totalBalance ?? userState.totalBalance ?? 0.00);
+      const effectiveWithdrawable = remoteProfile?.withdrawableBalance ?? (userData.withdrawableBalance ?? userState.withdrawableBalance ?? 0.00);
+      const effectiveLocked = remoteProfile?.lockedInvestment ?? userState.lockedInvestment ?? 0.00;
+      const activeCap = effectiveLocked > 0 ? effectiveLocked : effectiveTotalBalance;
+      const rangeTier = getVipTierForAmount(activeCap);
       const effectiveVipLevel = remoteProfile?.vipLevel !== undefined 
-        ? remoteProfile.vipLevel 
-        : (effectiveTotalBalance >= 10 ? 1 : 0);
-      const matchingTier = VIP_TIERS.find(v => v.level === effectiveVipLevel);
+        ? Number(remoteProfile.vipLevel) 
+        : (rangeTier ? rangeTier.level : (effectiveTotalBalance >= 10 ? 1 : 0));
+      const matchingTier = VIP_TIERS.find(v => v.level === effectiveVipLevel) || rangeTier;
       const effectiveDailyRate = remoteProfile?.dailyEarningRate !== undefined 
-        ? remoteProfile.dailyEarningRate 
+        ? Number(remoteProfile.dailyEarningRate) 
         : (matchingTier ? matchingTier.profitRateNum : (effectiveVipLevel > 0 ? 3.0 : 0.0));
 
       const freshUserState: UserState = {
         ...INITIAL_USER_STATE,
         uid: userData.uid,
         email: userData.email,
+        username: remoteProfile?.username || userData.username || '',
+        selectedLanguage: remoteProfile?.selectedLanguage || userState.selectedLanguage || 'en',
         referralCode: remoteProfile?.referralCode || userData.referralCode || `GOLD${Math.floor(1000 + Math.random() * 9000)}`,
         securityPin: remoteProfile?.securityPin || userData.securityPin || '',
         sponsorCode: remoteProfile?.sponsorCode || userData.sponsorCode || '',
         totalBalance: effectiveTotalBalance,
-        withdrawableBalance: remoteProfile?.withdrawableBalance ?? (userData.withdrawableBalance ?? 0.00),
-        bonusBalance: remoteProfile?.bonusBalance ?? 0.00,
-        lockedInvestment: remoteProfile?.lockedInvestment ?? 0.00,
-        investmentDaysElapsed: remoteProfile?.investmentDaysElapsed ?? 0,
-        hasReceivedFirstDepositBonus: remoteProfile?.hasReceivedFirstDepositBonus ?? false,
-        canClaimFirstDepositBonus: remoteProfile?.canClaimFirstDepositBonus ?? false,
-        firstDepositBonusAmount: remoteProfile?.firstDepositBonusAmount ?? 0.00,
-        hasReceived5RefBonus: remoteProfile?.hasReceived5RefBonus ?? false,
-        validReferralsCount: remoteProfile?.validReferralsCount ?? 0,
+        withdrawableBalance: effectiveWithdrawable,
+        bonusBalance: remoteProfile?.bonusBalance ?? userState.bonusBalance ?? 0.00,
+        lockedInvestment: effectiveLocked,
+        investmentDaysElapsed: remoteProfile?.investmentDaysElapsed ?? userState.investmentDaysElapsed ?? 0,
+        hasReceivedFirstDepositBonus: remoteProfile?.hasReceivedFirstDepositBonus ?? userState.hasReceivedFirstDepositBonus,
+        canClaimFirstDepositBonus: remoteProfile?.canClaimFirstDepositBonus ?? userState.canClaimFirstDepositBonus,
+        firstDepositBonusAmount: remoteProfile?.firstDepositBonusAmount ?? userState.firstDepositBonusAmount,
+        hasReceived5RefBonus: remoteProfile?.hasReceived5RefBonus ?? userState.hasReceived5RefBonus,
+        validReferralsCount: remoteProfile?.validReferralsCount ?? userState.validReferralsCount,
         todayQuantifiableCount: effectiveTodayCount,
-        lastQuantifyDate: isNewDay ? todayDateStr : remoteQuantifyDate,
+        lastQuantifyTimestamp: remoteLastTs,
+        nextQuantifyAllowedAt: isCooldownActive ? remoteNextAllowed : 0,
+        lastQuantifyDate: remoteProfile?.lastQuantifyDate || userState.lastQuantifyDate || '',
         maxDailyQuantifiable: 1,
         vipLevel: effectiveVipLevel,
         dailyEarningRate: effectiveDailyRate,
-        lastCheckinTimestamp: remoteProfile?.lastCheckinTimestamp ?? 0,
-        checkinStreak: remoteProfile?.checkinStreak ?? 0,
+        lastCheckinTimestamp: remoteProfile?.lastCheckinTimestamp ?? userState.lastCheckinTimestamp,
+        checkinStreak: remoteProfile?.checkinStreak ?? userState.checkinStreak,
       };
 
       setUserState(freshUserState);
@@ -627,6 +932,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...INITIAL_USER_STATE,
         uid: userData.uid,
         email: userData.email,
+        username: userData.username || '',
         referralCode: userData.referralCode || `GOLD${Math.floor(1000 + Math.random() * 9000)}`,
         securityPin: userData.securityPin || '',
         sponsorCode: userData.sponsorCode || '',
@@ -717,14 +1023,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const newTotal = +(userState.totalBalance + amount).toFixed(2);
     const newLocked = +(userState.lockedInvestment + amount).toFixed(2);
-    const shouldUnlockVip1 = (userState.vipLevel === 0 || !userState.vipLevel) && newTotal >= 10;
+    const activeCap = newLocked > 0 ? newLocked : newTotal;
+    const targetTier = getVipTierForAmount(activeCap);
+    const targetVip = targetTier ? targetTier.level : (newTotal >= 10 ? 1 : userState.vipLevel);
+    // Move forward if qualifying, cannot downgrade
+    const nextVip = Math.max(userState.vipLevel || 0, targetVip);
+    const targetTierConfig = VIP_TIERS.find(v => v.level === nextVip);
+    const nextRate = targetTierConfig ? targetTierConfig.profitRateNum : (nextVip > 0 ? 3.0 : 0.0);
 
     setUserState(prev => ({
       ...prev,
       totalBalance: newTotal,
       lockedInvestment: newLocked,
-      vipLevel: shouldUnlockVip1 ? 1 : prev.vipLevel,
-      dailyEarningRate: shouldUnlockVip1 ? 3.0 : prev.dailyEarningRate,
+      vipLevel: nextVip,
+      dailyEarningRate: nextRate,
       canClaimFirstDepositBonus: isFirstDeposit,
       firstDepositBonusAmount: isFirstDeposit ? bonusAmount : prev.firstDepositBonusAmount,
       lockStartDate: prev.lockStartDate || new Date().toISOString().split('T')[0]
@@ -741,8 +1053,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncUserProfileToFirestore(userState.uid, {
       totalBalance: newTotal,
       lockedInvestment: newLocked,
-      vipLevel: shouldUnlockVip1 ? 1 : userState.vipLevel,
-      dailyEarningRate: shouldUnlockVip1 ? 3.0 : userState.dailyEarningRate,
+      vipLevel: nextVip,
+      dailyEarningRate: nextRate,
       canClaimFirstDepositBonus: isFirstDeposit,
       firstDepositBonusAmount: isFirstDeposit ? bonusAmount : userState.firstDepositBonusAmount
     });
@@ -1078,10 +1390,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetVip = VIP_TIERS.find(v => v.level === targetLevel);
     if (!targetVip) return { success: false, message: 'VIP tier not found' };
 
-    if (userState.totalBalance < targetVip.minDeposit) {
+    // Forward progression constraint: user can only upgrade forward (e.g. VIP 1 -> VIP 2 -> VIP 3), cannot downgrade or re-buy current tier
+    if (targetLevel <= userState.vipLevel) {
       return {
         success: false,
-        message: `Requires minimum deposit of $${targetVip.minDeposit} USDT. Please deposit to activate VIP ${targetLevel}.`
+        message: `You cannot downgrade to a lower tier or re-purchase your current tier. You are currently at VIP ${userState.vipLevel}. You can only upgrade forward to higher VIP tiers.`
+      };
+    }
+
+    const activeBalance = userState.lockedInvestment > 0 ? userState.lockedInvestment : userState.totalBalance;
+    if (activeBalance < targetVip.minRange) {
+      return {
+        success: false,
+        message: `Requires invested balance within the ${targetVip.rangeLabel} range (minimum $${targetVip.minRange} USDT). Please deposit to activate VIP ${targetLevel}.`
       };
     }
 
@@ -1199,6 +1520,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         upgradeVipLevel,
         unlockMaturedInvestment,
         setLanguage,
+        t,
         toggleSound,
         claimedBonuses,
         completedTasks,

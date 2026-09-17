@@ -1,22 +1,10 @@
 import React from 'react';
 import { X, Globe, Check } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { SUPPORTED_LANGUAGES } from '../../utils/translations';
 
 export const LanguageModal: React.FC = () => {
-  const { closeModal, userState, setLanguage } = useApp();
-
-  const languages = [
-    { code: 'en', name: 'English', native: 'English', flag: '🇺🇸' },
-    { code: 'es', name: 'Spanish', native: 'Español', flag: '🇪🇸' },
-    { code: 'vi', name: 'Vietnamese', native: 'Tiếng Việt', flag: '🇻🇳' },
-    { code: 'zh', name: 'Chinese', native: '简体中文', flag: '🇨🇳' },
-    { code: 'hi', name: 'Hindi', native: 'हिन्दी', flag: '🇮🇳' },
-    { code: 'pt', name: 'Portuguese', native: 'Português', flag: '🇧🇷' },
-    { code: 'ru', name: 'Russian', native: 'Русский', flag: '🇷🇺' },
-    { code: 'tr', name: 'Turkish', native: 'Türkçe', flag: '🇹🇷' },
-    { code: 'ja', name: 'Japanese', native: '日本語', flag: '🇯🇵' },
-    { code: 'ar', name: 'Arabic', native: 'العربية', flag: '🇦🇪' },
-  ];
+  const { closeModal, userState, setLanguage, t } = useApp();
 
   const handleSelect = (code: string) => {
     setLanguage(code);
@@ -37,7 +25,7 @@ export const LanguageModal: React.FC = () => {
             <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center">
               <Globe className="w-4 h-4" />
             </div>
-            <h3 className="text-base font-bold text-white">Select Language</h3>
+            <h3 className="text-base font-bold text-white">{t('select_language')}</h3>
           </div>
           <button
             onClick={closeModal}
@@ -49,7 +37,7 @@ export const LanguageModal: React.FC = () => {
 
         {/* Languages list */}
         <div className="grid grid-cols-1 gap-2">
-          {languages.map((lang) => {
+          {SUPPORTED_LANGUAGES.map((lang) => {
             const isSelected = userState.selectedLanguage === lang.code;
             return (
               <button
@@ -62,7 +50,7 @@ export const LanguageModal: React.FC = () => {
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <span className="text-xl">{lang.flag}</span>
+                  <span className="text-2xl">{lang.flag}</span>
                   <div className="text-left">
                     <div className="text-xs font-bold text-white">{lang.name}</div>
                     <div className="text-[10px] text-slate-400">{lang.native}</div>

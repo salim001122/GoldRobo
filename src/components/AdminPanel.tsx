@@ -28,6 +28,11 @@ import {
   updateSystemTransactionStatus, 
   SystemTransaction 
 } from '../utils/adminTransactions';
+import { 
+  updateUserBalanceInFirestore, 
+  fetchUserProfileFromFirestore 
+} from '../utils/firebase';
+import { getVipTierForAmount } from '../data/mockData';
 import { CoinLogo } from './CoinLogo';
 
 interface AdminPanelProps {
@@ -107,38 +112,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleApprove = (tx: SystemTransaction) => {
+  const handleApprove = async (tx: SystemTransaction) => {
     const res = updateSystemTransactionStatus(tx.id, 'Completed', 'Approved & Credited by Admin salim@gmail.com');
     if (res) {
-      // Also update local user state if this user is active in current browser
-      try {
-        const rawUser = localStorage.getItem('goldrobo_user_state');
-        if (rawUser) {
-          const user = JSON.parse(rawUser);
-          if (user.uid === tx.userUid || user.email === tx.userEmail) {
-            if (tx.type === 'deposit') {
-              const amount = tx.profitAmount || tx.amount || 0;
-              const isFirstDeposit = !user.hasReceivedFirstDepositBonus && !user.canClaimFirstDepositBonus;
-              const bonusAmount = isFirstDeposit ? +(amount * 0.03).toFixed(2) : 0;
-              const newTotal = +(user.totalBalance + amount).toFixed(2);
-              const newLocked = +(user.lockedInvestment + amount).toFixed(2);
+      if (tx.type === 'deposit') {
+        const amount = tx.profitAmount || tx.amount || 0;
+        
+        // Update Cloud Firestore document directly so Firebase Console and remote devices update
+        if (tx.userUid) {
+          try {
+            const profile = await fetchUserProfileFromFirestore(tx.userUid);
+            const currentTotal = +(profile?.totalBalance ?? 0);
+            const currentLocked = +(profile?.lockedInvestment ?? 0);
+            const newTotal = +(currentTotal + amount).toFixed(2);
+            const newLocked = +(currentLocked + amount).toFixed(2);
+            const activeCapital = newLocked > 0 ? newLocked : newTotal;
+            const matchingTier = getVipTierForAmount(activeCapital);
+            const newVip = matchingTier ? matchingTier.level : (newTotal >= 10 ? 1 : (profile?.vipLevel || 0));
+            const newRate = matchingTier ? matchingTier.profitRateNum : (newVip > 0 ? 3.0 : (profile?.dailyEarningRate || 0.0));
+            const isFirstDeposit = !profile?.hasReceivedFirstDepositBonus && !profile?.canClaimFirstDepositBonus;
+            const bonusAmount = isFirstDeposit ? +(amount * 0.03).toFixed(2) : 0;
 
-              const shouldUnlockVip1 = (user.vipLevel === 0 || !user.vipLevel) && newTotal >= 10;
-              const updatedUser = {
-                ...user,
-                totalBalance: newTotal,
-                lockedInvestment: newLocked,
-                vipLevel: shouldUnlockVip1 ? 1 : user.vipLevel,
-                dailyEarningRate: shouldUnlockVip1 ? 3.0 : user.dailyEarningRate,
-                canClaimFirstDepositBonus: isFirstDeposit,
-                firstDepositBonusAmount: isFirstDeposit ? bonusAmount : user.firstDepositBonusAmount,
-                lockStartDate: user.lockStartDate || new Date().toISOString().split('T')[0]
-              };
-              localStorage.setItem('goldrobo_user_state', JSON.stringify(updatedUser));
-            }
+            await updateUserBalanceInFirestore(tx.userUid, {
+              totalBalance: newTotal,
+              lockedInvestment: newLocked,
+              vipLevel: newVip,
+              dailyEarningRate: newRate,
+              canClaimFirstDepositBonus: isFirstDeposit,
+              firstDepositBonusAmount: isFirstDeposit ? bonusAmount : (profile?.firstDepositBonusAmount || 0),
+              hasDeposited: true
+            });
+          } catch (err: any) {
+            console.warn('Admin Firestore balance update note:', err?.message);
           }
         }
-      } catch {}
+      }
 
       loadTransactions();
       const actionText = tx.type === 'deposit' ? `+$${(tx.profitAmount || tx.amount || 0).toFixed(2)} USDT credited` : `payout sent`;
@@ -147,28 +155,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
     }
   };
 
-  const handleConfirmReject = () => {
+  const handleConfirmReject = async () => {
     if (!rejectModalTx) return;
     const res = updateSystemTransactionStatus(rejectModalTx.id, 'Rejected', rejectReason);
     if (res) {
-      // If a withdrawal was rejected, refund the user's balance in localStorage as well
-      try {
-        if (rejectModalTx.type === 'withdraw') {
-          const rawUser = localStorage.getItem('goldrobo_user_state');
-          if (rawUser) {
-            const user = JSON.parse(rawUser);
-            if (user.uid === rejectModalTx.userUid || user.email === rejectModalTx.userEmail) {
-              const refundAmount = Math.abs(rejectModalTx.profitAmount || rejectModalTx.amount || 0);
-              const updatedUser = {
-                ...user,
-                totalBalance: +(user.totalBalance + refundAmount).toFixed(2),
-                withdrawableBalance: +(user.withdrawableBalance + refundAmount).toFixed(2)
-              };
-              localStorage.setItem('goldrobo_user_state', JSON.stringify(updatedUser));
-            }
-          }
+      // If a withdrawal was rejected, refund the user's balance in Firestore
+      if (rejectModalTx.type === 'withdraw' && rejectModalTx.userUid) {
+        try {
+          const profile = await fetchUserProfileFromFirestore(rejectModalTx.userUid);
+          const refundAmount = Math.abs(rejectModalTx.profitAmount || rejectModalTx.amount || 0);
+          const currentTotal = +(profile?.totalBalance ?? 0);
+          const currentWithdrawable = +(profile?.withdrawableBalance ?? 0);
+          await updateUserBalanceInFirestore(rejectModalTx.userUid, {
+            totalBalance: +(currentTotal + refundAmount).toFixed(2),
+            withdrawableBalance: +(currentWithdrawable + refundAmount).toFixed(2)
+          });
+        } catch (err: any) {
+          console.warn('Admin reject refund note:', err?.message);
         }
-      } catch {}
+      }
 
       loadTransactions();
       setActionSuccessMsg(`Transaction ${rejectModalTx.orderId || rejectModalTx.id} REJECTED: ${rejectReason}`);

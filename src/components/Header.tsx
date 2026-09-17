@@ -1,6 +1,7 @@
 import React from 'react';
 import { User, Globe, RotateCw, ChevronLeft, Info, Bell } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { SUPPORTED_LANGUAGES } from '../utils/translations';
 
 interface HeaderProps {
   showBack?: boolean;
@@ -17,7 +18,8 @@ export const Header: React.FC<HeaderProps> = ({
   showCoinInfo,
   onCoinInfo
 }) => {
-  const { activeTab, setActiveTab, openModal } = useApp();
+  const { activeTab, setActiveTab, openModal, userState, t } = useApp();
+  const currentLangObj = SUPPORTED_LANGUAGES.find(l => l.code === userState.selectedLanguage);
 
   if (showBack) {
     return (
@@ -91,33 +93,36 @@ export const Header: React.FC<HeaderProps> = ({
           id="btn-profile-header"
           onClick={() => openModal('profile')}
           className="w-9 h-9 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-300 hover:text-white hover:border-slate-500 active:scale-95 transition-all shadow-sm"
-          title="Account & Security"
+          title={t('account_security', 'Account & Security')}
           aria-label="Account profile"
         >
           <User className="w-4 h-4" />
         </button>
 
-        {activeTab === 'assets' ? (
+        {activeTab === 'assets' && (
           <button
             id="btn-history-header"
             onClick={() => openModal('history')}
             className="w-9 h-9 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-300 hover:text-white hover:border-slate-500 active:scale-95 transition-all shadow-sm"
-            title="Transaction History"
+            title={t('records', 'Transaction History')}
             aria-label="Transaction History"
           >
             <RotateCw className="w-4 h-4" />
           </button>
-        ) : (
-          <button
-            id="btn-language-header"
-            onClick={() => openModal('language')}
-            className="w-9 h-9 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-300 hover:text-white hover:border-slate-500 active:scale-95 transition-all shadow-sm"
-            title="Switch Language"
-            aria-label="Language selection"
-          >
-            <Globe className="w-4 h-4" />
-          </button>
         )}
+
+        <button
+          id="btn-language-header"
+          onClick={() => openModal('language')}
+          className="h-9 px-2.5 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center gap-1.5 text-slate-200 hover:text-white hover:border-amber-500/50 active:scale-95 transition-all shadow-sm"
+          title={t('switch_language', 'Switch Language')}
+          aria-label="Language selection"
+        >
+          <span className="text-base leading-none">{currentLangObj?.flag || '🌐'}</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300 font-mono">
+            {userState.selectedLanguage}
+          </span>
+        </button>
       </div>
     </header>
   );

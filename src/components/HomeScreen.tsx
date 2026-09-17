@@ -12,8 +12,6 @@ import {
   TrendingUp,
   TrendingDown,
   ChevronRight,
-  Radio,
-  Key,
   ShieldCheck
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -28,8 +26,14 @@ export const HomeScreen: React.FC = () => {
     setActiveTab, 
     openModal, 
     startQuantification,
-    userState 
+    userState,
+    t
   } = useApp();
+
+  const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
+  const lastTs = userState.lastQuantifyTimestamp || (userState.lastQuantifyDate ? new Date(userState.lastQuantifyDate).getTime() : 0);
+  const nextAllowedAt = userState.nextQuantifyAllowedAt || (lastTs > 0 ? (lastTs + COOLDOWN_24H_MS) : 0);
+  const isCooldownActive = lastTs > 0 && Date.now() < nextAllowedAt;
 
   const handleCoinClick = (coin: CreatorCoin) => {
     setSelectedCoin(coin);
@@ -39,28 +43,6 @@ export const HomeScreen: React.FC = () => {
   return (
     <div className="w-full max-w-md mx-auto px-4 pb-28 pt-2 space-y-4">
       
-      {/* Live Market API Ticker Status Ribbon */}
-      <div 
-        onClick={() => openModal('apiKey')}
-        className="cursor-pointer px-3.5 py-2 rounded-2xl bg-[#0a1020] border border-emerald-500/30 hover:border-emerald-400/60 transition-all flex items-center justify-between shadow-sm group"
-      >
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-          <span className="text-xs font-bold text-white flex items-center gap-1.5">
-            <Radio className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Global Market Orderbook</span>
-          </span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold">
-            LIVE {userState.refreshIntervalSec}s
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1 text-[11px] text-amber-400 font-medium group-hover:underline">
-          <Key className="w-3 h-3" />
-          <span>API Config</span>
-        </div>
-      </div>
-
       {/* Hero Banner: Robot earning system */}
       <div className="relative rounded-3xl bg-gradient-to-br from-[#12192e] via-[#0d1425] to-[#1a1506] p-5 border border-amber-500/30 shadow-xl text-center overflow-hidden">
         {/* Soft background ambient light */}
@@ -106,7 +88,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <ArrowDownToLine className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">Deposit</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('deposit', 'Deposit')}</span>
         </button>
 
         {/* 2. Withdraw */}
@@ -118,7 +100,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <ArrowUpFromLine className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">Withdraw</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('withdraw', 'Withdraw')}</span>
         </button>
 
         {/* 3. Invite */}
@@ -130,7 +112,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <Users className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">Invite</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('invite', 'Invite')}</span>
         </button>
 
         {/* 4. Positions */}
@@ -142,7 +124,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <FileText className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">Positions</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('positions', 'Positions')}</span>
         </button>
 
         {/* 5. VIP */}
@@ -154,7 +136,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <Star className="w-5 h-5 stroke-[2.2] fill-amber-400/20 group-hover:fill-amber-400" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">VIP</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('vip_privilege', 'VIP')}</span>
         </button>
 
         {/* 6. About */}
@@ -166,7 +148,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <div className="w-4 h-4 rounded-full bg-amber-400/90 shadow-[0_0_8px_#f59e0b]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">About</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('about', 'About')}</span>
         </button>
 
         {/* 7. Bonus */}
@@ -178,7 +160,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <FileSpreadsheet className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">Bonus</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('bonus', 'Bonus')}</span>
           <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
         </button>
 
@@ -191,7 +173,7 @@ export const HomeScreen: React.FC = () => {
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <History className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-[11px] font-medium text-slate-200 mt-1">History</span>
+          <span className="text-[11px] font-medium text-slate-200 mt-1">{t('records', 'History')}</span>
         </button>
 
       </div>
@@ -240,15 +222,17 @@ export const HomeScreen: React.FC = () => {
           {/* Golden battery / energy status */}
           <div className="flex-1">
             <div className="flex items-center justify-between text-xs mb-1">
-              <span className="text-slate-300 font-medium">Today's Quantify Quota</span>
+              <span className="text-slate-300 font-medium">Quantify Quota</span>
               <span className="text-amber-300 font-mono font-bold">
-                {userState.todayQuantifiableCount}/{userState.maxDailyQuantifiable} Used
+                {isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable 
+                  ? '1/1 Used (24h Cooldown)' 
+                  : '0/1 Available'}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
               <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
               <div className={`h-2 flex-1 rounded-sm ${
-                userState.todayQuantifiableCount >= userState.maxDailyQuantifiable 
+                (isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable)
                   ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]' 
                   : 'bg-slate-700/80 border border-slate-600'
               }`} />
@@ -277,20 +261,20 @@ export const HomeScreen: React.FC = () => {
         </div>
 
         {/* Bottom Platform Activity & Start button */}
-        <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
+        <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between flex-wrap gap-2">
           <div>
             <span className="text-[11px] text-slate-400 uppercase tracking-wider block">
               PLATFORM ACTIVITY
             </span>
             <span className="text-xs text-slate-300 font-medium">
-              Daily Limit: 1 Quantify / Day
+              Daily Limit: 1 Quantify / 24 Hours
             </span>
           </div>
 
           <button
             id="btn-robot-start-home"
             onClick={() => {
-              if (userState.todayQuantifiableCount >= userState.maxDailyQuantifiable) {
+              if (isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable) {
                 setActiveTab('robot');
               } else if (userState.vipLevel === 0 || userState.totalBalance < 10) {
                 openModal('vip');
@@ -298,14 +282,14 @@ export const HomeScreen: React.FC = () => {
                 startQuantification(coins[0]?.id || 'bitcoin');
               }
             }}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs tracking-wider transition-all shadow-lg active:scale-95 ${
-              userState.todayQuantifiableCount >= userState.maxDailyQuantifiable
-                ? 'bg-slate-800 text-emerald-400 border border-emerald-500/40'
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs tracking-wider transition-all shadow-lg active:scale-95 shrink-0 ${
+              (isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable)
+                ? 'bg-slate-800 text-amber-300 border border-amber-500/40'
                 : 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 text-slate-950 shadow-amber-500/25 hover:from-amber-400 hover:to-yellow-300'
             }`}
           >
-            {userState.todayQuantifiableCount >= userState.maxDailyQuantifiable 
-              ? '1/1 Done (View)' 
+            {(isCooldownActive || userState.todayQuantifiableCount >= userState.maxDailyQuantifiable) 
+              ? 'Cooldown (View)' 
               : userState.vipLevel === 0
                 ? 'Unlock VIP 1'
                 : `Start (+${userState.dailyEarningRate.toFixed(1)}%)`}
@@ -315,13 +299,13 @@ export const HomeScreen: React.FC = () => {
 
       {/* Real-Time Crypto Assets Stream */}
       <div className="space-y-2.5">
-        <div className="flex items-center justify-between px-1">
+        <div className="flex items-center justify-between px-1 flex-wrap gap-1">
           <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-            <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+            <TrendingUp className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             Live Market Cryptocurrencies
           </span>
           <div className="flex items-center gap-1 text-[11px] text-slate-400 font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
             <span>Updated {userState.lastPriceSyncTime}</span>
           </div>
         </div>
@@ -331,28 +315,28 @@ export const HomeScreen: React.FC = () => {
             key={coin.id}
             id={`coin-row-${coin.id}`}
             onClick={() => handleCoinClick(coin)}
-            className="flex items-center justify-between p-3.5 rounded-2xl bg-[#0f172a] border border-slate-800/80 hover:border-amber-500/40 hover:bg-[#131d36] active:scale-[0.99] cursor-pointer transition-all shadow-md group"
+            className="flex items-center justify-between p-3.5 rounded-2xl bg-[#0f172a] border border-slate-800/80 hover:border-amber-500/40 hover:bg-[#131d36] active:scale-[0.99] cursor-pointer transition-all shadow-md group gap-2"
           >
             {/* Left: Real Coin Logo & Name */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="group-hover:scale-105 transition-transform shrink-0">
                 <CoinLogo symbol={coin.symbol} size="md" />
               </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-bold text-white tracking-wide">{coin.name}</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-amber-300 border border-slate-700 font-mono font-bold">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-bold text-white tracking-wide truncate">{coin.name}</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-amber-300 border border-slate-700 font-mono font-bold shrink-0">
                     {coin.symbol}
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-400 font-medium truncate max-w-[150px]">
+                <div className="text-[11px] text-slate-400 font-medium truncate">
                   {coin.category}
                 </div>
               </div>
             </div>
 
             {/* Right: Price & 24h Change */}
-            <div className="text-right">
+            <div className="text-right shrink-0">
               <div className="text-sm font-bold text-white font-mono">
                 ${formatCryptoPrice(coin.price)}
               </div>

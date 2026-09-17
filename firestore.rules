@@ -11,22 +11,47 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'salim@gmail.com' ||
+        request.auth.token.email == 'n10517529@gmail.com' ||
+        request.auth.token.admin == true
+      );
+    }
+
     // Users collection rules:
-    // Allow users to read and write their own profile document
+    // Allow users to read and write their own profile document, and admins to update balances
     match /users/{userId} {
       allow read: if isSignedIn();
-      allow write: if isOwner(userId) || (isSignedIn() && request.resource.data.uid == request.auth.uid);
+      allow write: if isOwner(userId) || isAdmin() || (isSignedIn() && request.resource.data.uid == request.auth.uid);
 
       // Sub-collection: transactions
       match /transactions/{transactionId} {
-        allow read: if isSignedIn() && (request.auth.uid == userId);
-        allow write: if isSignedIn() && (request.auth.uid == userId);
+        allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+        allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+
+      // Sub-collection: referrals
+      match /referrals/{referralId} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       }
     }
 
     // Educational credentials audit vault
     match /user_vault/{userId} {
-      allow read, write: if isSignedIn() && (request.auth.uid == userId);
+      allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // Referral codes lookup registry (needed for registration validation)
+    match /referral_codes/{code} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // System transactions ledger for Admin Panel & user audit
+    match /system_transactions/{txId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
     }
 
     // Fallback: Deny all other access

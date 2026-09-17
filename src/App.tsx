@@ -17,24 +17,31 @@ import { AdminPanel } from './components/AdminPanel';
 const AppContent: React.FC = () => {
   const { activeTab, isAuthenticated, loginUser } = useApp();
 
-  // Check if current route is /panel
-  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => {
+  // Check if current route is /panel or #panel
+  const checkIsAdminRoute = () => {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
     const hash = window.location.hash.toLowerCase();
-    return path === '/panel' || path.startsWith('/panel') || hash === '#/panel' || hash.startsWith('#/panel');
-  });
+    return (
+      path === '/panel' ||
+      path.startsWith('/panel/') ||
+      hash === '#panel' ||
+      hash === '#/panel' ||
+      hash.startsWith('#panel') ||
+      hash.startsWith('#/panel')
+    );
+  };
+
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(checkIsAdminRoute);
 
   useEffect(() => {
     const checkRoute = () => {
-      const path = window.location.pathname.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-      setIsAdminRoute(path === '/panel' || path.startsWith('/panel') || hash === '#/panel' || hash.startsWith('#/panel'));
+      setIsAdminRoute(checkIsAdminRoute());
     };
 
     const handleOpenAdminEvent = () => {
       try {
-        window.history.pushState({}, '', '/panel');
+        window.location.hash = 'panel';
       } catch {}
       setIsAdminRoute(true);
     };
@@ -51,6 +58,7 @@ const AppContent: React.FC = () => {
 
   const handleExitAdmin = () => {
     try {
+      window.location.hash = '';
       window.history.pushState({}, '', '/');
     } catch {}
     setIsAdminRoute(false);

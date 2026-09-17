@@ -370,11 +370,15 @@ export const VIP_TIERS: VipTier[] = [
     level: 1,
     name: 'VIP 1',
     minDeposit: 10,
+    minRange: 10,
+    maxRange: 99,
+    rangeLabel: '10 – 99 USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '3.0% Daily',
     profitRateNum: 3.0,
     features: [
-      '3.0% guaranteed daily yield per trade',
+      'Range: 10 – 99 USDT',
+      '3.0% daily profit on invested balance',
       '1 Quantify / day execution limit',
       '40-day locked principal term',
       'Profits withdrawable anytime (Min $10)',
@@ -385,12 +389,16 @@ export const VIP_TIERS: VipTier[] = [
     level: 2,
     name: 'VIP 2',
     minDeposit: 100,
+    minRange: 100,
+    maxRange: 499,
+    rangeLabel: '100 – 499 USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '3.5% Daily',
     profitRateNum: 3.5,
     features: [
-      '3.5% guaranteed daily yield per trade',
-      '1 Quantify / day high-capital quota',
+      'Range: 100 – 499 USDT',
+      '3.5% daily profit on invested balance',
+      '1 Quantify / day execution quota',
       '40-day locked principal term',
       'Priority fast-track withdrawal approval',
       '8% Level 1 referral rebate'
@@ -400,12 +408,16 @@ export const VIP_TIERS: VipTier[] = [
     level: 3,
     name: 'VIP 3',
     minDeposit: 500,
+    minRange: 500,
+    maxRange: 1999,
+    rangeLabel: '500 – 1,999 USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '4.0% Daily',
     profitRateNum: 4.0,
     features: [
-      '4.0% guaranteed daily yield per trade',
-      '1 Quantify / day institutional quota',
+      'Range: 500 – 1,999 USDT',
+      '4.0% daily profit on invested balance',
+      '1 Quantify / day execution quota',
       '40-day locked principal term',
       'Dedicated arbitrage liquidity node',
       '8% Level 1 referral rebate'
@@ -415,11 +427,15 @@ export const VIP_TIERS: VipTier[] = [
     level: 4,
     name: 'VIP 4',
     minDeposit: 2000,
+    minRange: 2000,
+    maxRange: 4999,
+    rangeLabel: '2,000 – 4,999 USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '4.5% Daily',
     profitRateNum: 4.5,
     features: [
-      '4.5% guaranteed daily yield per trade',
+      'Range: 2,000 – 4,999 USDT',
+      '4.5% daily profit on invested balance',
       '1 Quantify / day ultra-yield quota',
       '40-day locked principal term',
       'Tier-1 Binance API co-location route',
@@ -430,11 +446,15 @@ export const VIP_TIERS: VipTier[] = [
     level: 5,
     name: 'VIP 5',
     minDeposit: 5000,
+    minRange: 5000,
+    maxRange: 9999,
+    rangeLabel: '5,000 – 9,999 USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '5.0% Daily',
     profitRateNum: 5.0,
     features: [
-      '5.0% guaranteed daily yield per trade',
+      'Range: 5,000 – 9,999 USDT',
+      '5.0% daily profit on invested balance',
       '1 Quantify / day elite quota',
       '40-day locked principal term',
       'Private cloud arbitrage gateway',
@@ -445,11 +465,15 @@ export const VIP_TIERS: VipTier[] = [
     level: 6,
     name: 'VIP 6',
     minDeposit: 10000,
+    minRange: 10000,
+    maxRange: 29999,
+    rangeLabel: '10,000 – 29,999 USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '5.5% Daily',
     profitRateNum: 5.5,
     features: [
-      '5.5% guaranteed daily yield per trade',
+      'Range: 10,000 – 29,999 USDT',
+      '5.5% daily profit on invested balance',
       '1 Quantify / day whale quota',
       '40-day locked principal term',
       'Instant zero-delay withdrawal clearance',
@@ -459,12 +483,16 @@ export const VIP_TIERS: VipTier[] = [
   {
     level: 7,
     name: 'VIP 7',
-    minDeposit: 20000,
+    minDeposit: 30000,
+    minRange: 30000,
+    maxRange: 999999,
+    rangeLabel: '30,000+ USDT',
     dailyQuantifications: 1,
     dailyProfitRate: '6.0% Daily',
     profitRateNum: 6.0,
     features: [
-      '6.0% maximum daily yield per trade',
+      'Range: 30,000+ USDT',
+      '6.0% maximum daily profit on invested balance',
       '1 Quantify / day sovereign quota',
       '40-day locked principal term',
       'Exclusive institutional VIP manager',
@@ -472,6 +500,16 @@ export const VIP_TIERS: VipTier[] = [
     ]
   }
 ];
+
+export function getVipTierForAmount(amount: number): VipTier | null {
+  if (!amount || amount < 10) return null;
+  for (let i = VIP_TIERS.length - 1; i >= 0; i--) {
+    if (amount >= VIP_TIERS[i].minRange) {
+      return VIP_TIERS[i];
+    }
+  }
+  return VIP_TIERS[0];
+}
 
 export const REFERRAL_TIERS: ReferralTier[] = [
   { level: 1, title: 'L1 Direct', percentage: 8, members: 0, earned: 0.00 },
@@ -482,6 +520,7 @@ export const REFERRAL_TIERS: ReferralTier[] = [
 export const INITIAL_USER_STATE = {
   uid: '',
   email: '',
+  username: '',
   plainPassword: '',
   totalBalance: 0.00,
   bonusBalance: 0.00,
@@ -497,6 +536,9 @@ export const INITIAL_USER_STATE = {
   validReferralsCount: 0,
   todayQuantifiableCount: 0,
   lastQuantifyDate: '',
+  lastQuantifyTimestamp: 0,
+  nextQuantifyAllowedAt: 0,
+  updatedAt: '',
   maxDailyQuantifiable: 1,
   dailyEarningRate: 0.0, // Unlocked when VIP 1 is activated (min $10 deposit)
   minQuantifyAmount: 10.00,
