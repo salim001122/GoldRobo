@@ -1110,16 +1110,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       profitAmount: -amount,
       amount: amount,
       actualAmount: netArrival,
+      netPayoutAmount: netArrival,
       serviceCharge: feeAmount,
       approvalStatus: 'Auditing in progress',
       paymentStatus: 'Pending Admin Transfer',
       balanceAfter: newTotal,
       type: 'withdraw',
       status: 'Pending',
-      txHash: `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 10)}`,
+      txHash: '',
       orderId,
-      network: network,
-      nodeRoute: 'Security Audit Queue (1m - 24h)'
+      network: `USDT-${network}`,
+      transferNetwork: network,
+      withdrawalAddress: address.trim(),
+      destinationAddress: address.trim(),
+      userEmail: userState.email,
+      userUid: userState.uid,
+      username: userState.username,
+      nodeRoute: `${network} Institutional Settlement Queue (1m - 24h)`
     };
 
     setHistory(prev => [newTx, ...prev]);

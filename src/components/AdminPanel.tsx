@@ -25,6 +25,8 @@ import {
   isAdminAuthenticated, 
   setAdminAuthenticated, 
   getAllSystemTransactions, 
+  fetchSystemTransactionsFromCloud,
+  subscribeToSystemTransactionsCloud,
   updateSystemTransactionStatus, 
   SystemTransaction 
 } from '../utils/adminTransactions';
@@ -48,7 +50,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
 
   // Transactions State
   const [transactions, setTransactions] = useState<SystemTransaction[]>([]);
-  const [filterStatus, setFilterStatus] = useState<'all' | 'Pending' | 'Completed' | 'Rejected'>('Pending');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'Pending' | 'withdraw' | 'deposit' | 'Completed' | 'Rejected'>('Pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
@@ -57,23 +59,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
   const [rejectModalTx, setRejectModalTx] = useState<SystemTransaction | null>(null);
   const [rejectReason, setRejectReason] = useState('Invalid TXID or transfer not detected on blockchain.');
 
-  // Load transactions
-  const loadTransactions = () => {
+  // Withdrawal Payout Modal State
+  const [payoutModalTx, setPayoutModalTx] = useState<SystemTransaction | null>(null);
+  const [payoutTxHash, setPayoutTxHash] = useState<string>('');
+
+  // Load transactions from cache and cloud
+  const loadTransactions = async () => {
     const list = getAllSystemTransactions();
     setTransactions(list);
+    try {
+      const cloudList = await fetchSystemTransactionsFromCloud();
+      if (cloudList && cloudList.length > 0) {
+        setTransactions(cloudList);
+      }
+    } catch {}
   };
 
   useEffect(() => {
     if (authenticated) {
       loadTransactions();
-      const interval = setInterval(loadTransactions, 3000);
+      const unsubscribe = subscribeToSystemTransactionsCloud((txs) => {
+        setTransactions(txs);
+      });
 
       const handleUpdate = () => loadTransactions();
       window.addEventListener('goldrobo_system_tx_updated', handleUpdate);
       window.addEventListener('storage', handleUpdate);
 
       return () => {
-        clearInterval(interval);
+        unsubscribe();
         window.removeEventListener('goldrobo_system_tx_updated', handleUpdate);
         window.removeEventListener('storage', handleUpdate);
       };
@@ -113,7 +127,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
   };
 
   const handleApprove = async (tx: SystemTransaction) => {
-    const res = updateSystemTransactionStatus(tx.id, 'Completed', 'Approved & Credited by Admin salim@gmail.com');
+    if (tx.type === 'withdraw') {
+      setPayoutModalTx(tx);
+      setPayoutTxHash('');
+      return;
+    }
+
+    const res = await updateSystemTransactionStatus(tx.id, 'Completed', 'Approved & Credited by Admin salim@gmail.com');
     if (res) {
       if (tx.type === 'deposit') {
         const amount = tx.profitAmount || tx.amount || 0;
@@ -148,16 +168,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
         }
       }
 
-      loadTransactions();
-      const actionText = tx.type === 'deposit' ? `+$${(tx.profitAmount || tx.amount || 0).toFixed(2)} USDT credited` : `payout sent`;
+      await loadTransactions();
+      const actionText = `+$${(tx.profitAmount || tx.amount || 0).toFixed(2)} USDT credited`;
       setActionSuccessMsg(`Transaction ${tx.orderId || tx.id} successfully APPROVED (${actionText}).`);
       setTimeout(() => setActionSuccessMsg(null), 4000);
     }
   };
 
+  const handleConfirmPayout = async () => {
+    if (!payoutModalTx) return;
+    const hash = payoutTxHash.trim() || undefined;
+    const res = await updateSystemTransactionStatus(
+      payoutModalTx.id,
+      'Completed',
+      'Withdrawal Payout dispatched & confirmed by Admin salim@gmail.com',
+      hash
+    );
+
+    if (res) {
+      await loadTransactions();
+      const net = (payoutModalTx.netPayoutAmount || payoutModalTx.actualAmount || Math.abs(payoutModalTx.profitAmount || 0)).toFixed(2);
+      const addr = payoutModalTx.withdrawalAddress || payoutModalTx.destinationAddress || 'address';
+      setActionSuccessMsg(`Withdrawal ${payoutModalTx.orderId || payoutModalTx.id} APPROVED: $${net} USDT dispatched to ${addr}`);
+      setTimeout(() => setActionSuccessMsg(null), 5000);
+    }
+    setPayoutModalTx(null);
+    setPayoutTxHash('');
+  };
+
   const handleConfirmReject = async () => {
     if (!rejectModalTx) return;
-    const res = updateSystemTransactionStatus(rejectModalTx.id, 'Rejected', rejectReason);
+    const res = await updateSystemTransactionStatus(rejectModalTx.id, 'Rejected', rejectReason);
     if (res) {
       // If a withdrawal was rejected, refund the user's balance in Firestore
       if (rejectModalTx.type === 'withdraw' && rejectModalTx.userUid) {
@@ -175,7 +216,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
         }
       }
 
-      loadTransactions();
+      await loadTransactions();
       setActionSuccessMsg(`Transaction ${rejectModalTx.orderId || rejectModalTx.id} REJECTED: ${rejectReason}`);
       setTimeout(() => setActionSuccessMsg(null), 4000);
     }
@@ -184,7 +225,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
 
   // Filtered transactions
   const filtered = transactions.filter(t => {
-    const matchesStatus = filterStatus === 'all' ? true : t.status === filterStatus;
+    let matchesStatus = true;
+    if (filterStatus === 'Pending') matchesStatus = t.status === 'Pending';
+    else if (filterStatus === 'Completed') matchesStatus = t.status === 'Completed';
+    else if (filterStatus === 'Rejected') matchesStatus = t.status === 'Rejected';
+    else if (filterStatus === 'withdraw') matchesStatus = t.type === 'withdraw';
+    else if (filterStatus === 'deposit') matchesStatus = t.type === 'deposit';
+
     const query = searchQuery.toLowerCase();
     const matchesQuery = !query || 
       t.coinName?.toLowerCase().includes(query) ||
@@ -192,17 +239,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
       t.id?.toLowerCase().includes(query) ||
       t.txHash?.toLowerCase().includes(query) ||
       t.userEmail?.toLowerCase().includes(query) ||
-      t.userUid?.toLowerCase().includes(query);
+      t.userUid?.toLowerCase().includes(query) ||
+      (t.withdrawalAddress && t.withdrawalAddress.toLowerCase().includes(query)) ||
+      (t.destinationAddress && t.destinationAddress.toLowerCase().includes(query));
     return matchesStatus && matchesQuery;
   });
 
   const pendingCount = transactions.filter(t => t.status === 'Pending').length;
+  const pendingWithdrawCount = transactions.filter(t => t.status === 'Pending' && t.type === 'withdraw').length;
+  const pendingDepositCount = transactions.filter(t => t.status === 'Pending' && t.type === 'deposit').length;
   const pendingVolume = transactions
     .filter(t => t.status === 'Pending')
-    .reduce((acc, t) => acc + (t.profitAmount || t.amount || 0), 0);
+    .reduce((acc, t) => acc + Math.abs(t.profitAmount || t.amount || 0), 0);
   const completedVolume = transactions
     .filter(t => t.status === 'Completed')
-    .reduce((acc, t) => acc + (t.profitAmount || t.amount || 0), 0);
+    .reduce((acc, t) => acc + Math.abs(t.profitAmount || t.amount || 0), 0);
 
   // Authentication Login Gate
   if (!authenticated) {
@@ -443,6 +494,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
               </button>
 
               <button
+                onClick={() => setFilterStatus('withdraw')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                  filterStatus === 'withdraw'
+                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                    : 'bg-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <Wallet className="w-3.5 h-3.5" />
+                <span>Withdrawals {pendingWithdrawCount > 0 ? `(${pendingWithdrawCount} pending)` : ''}</span>
+              </button>
+
+              <button
+                onClick={() => setFilterStatus('deposit')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                  filterStatus === 'deposit'
+                    ? 'bg-amber-400 text-slate-950 shadow-md'
+                    : 'bg-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <DollarSign className="w-3.5 h-3.5" />
+                <span>Deposits {pendingDepositCount > 0 ? `(${pendingDepositCount} pending)` : ''}</span>
+              </button>
+
+              <button
                 onClick={() => setFilterStatus('all')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   filterStatus === 'all'
@@ -483,7 +558,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search TXID, Order ID, User..."
+                placeholder="Search Address, TXID, Order, User..."
                 className="w-full md:w-64 pl-9 pr-4 py-2 rounded-xl bg-[#060a14] border border-slate-800 text-white text-xs focus:outline-none focus:border-amber-400 transition-colors"
               />
             </div>
@@ -506,6 +581,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                 const isPending = tx.status === 'Pending';
                 const isCompleted = tx.status === 'Completed';
                 const isRejected = tx.status === 'Rejected';
+                const isWithdrawal = tx.type === 'withdraw';
+                const netPayout = tx.netPayoutAmount || tx.actualAmount || Math.abs(tx.profitAmount || tx.amount || 0);
+                const grossAmount = tx.amount || Math.abs(tx.profitAmount || 0);
+                const destAddress = tx.withdrawalAddress || tx.destinationAddress || '';
 
                 return (
                   <div
@@ -513,7 +592,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                     id={`admin-tx-${tx.id}`}
                     className={`p-4 rounded-2xl bg-[#070b16] border transition-all space-y-3 ${
                       isPending 
-                        ? 'border-amber-500/40 shadow-lg shadow-amber-500/5' 
+                        ? (isWithdrawal ? 'border-cyan-500/40 shadow-lg shadow-cyan-500/5' : 'border-amber-500/40 shadow-lg shadow-amber-500/5')
                         : isCompleted 
                         ? 'border-slate-800/80' 
                         : 'border-rose-500/30'
@@ -523,23 +602,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className={`w-2.5 h-2.5 rounded-full ${
-                          isPending ? 'bg-amber-400 animate-ping' : isCompleted ? 'bg-emerald-400' : 'bg-rose-500'
+                          isPending ? (isWithdrawal ? 'bg-cyan-400 animate-ping' : 'bg-amber-400 animate-ping') : isCompleted ? 'bg-emerald-400' : 'bg-rose-500'
                         }`} />
                         <span className="text-sm font-bold text-white">
-                          {tx.coinName || 'USDT Deposit'}
+                          {tx.coinName || (isWithdrawal ? 'USDT Withdrawal' : 'USDT Deposit')}
                         </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-mono">
-                          {tx.network || 'TRC20'}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-bold ${
+                          isWithdrawal ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        }`}>
+                          {tx.transferNetwork || tx.network || 'TRC20'}
                         </span>
+                        {isWithdrawal && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold uppercase tracking-wider">
+                            Payout Request
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <span className="text-base font-black font-mono text-emerald-400">
-                          +${(tx.profitAmount || tx.amount || 0).toFixed(2)} USDT
-                        </span>
+                        {isWithdrawal ? (
+                          <div className="text-right">
+                            <span className="text-base font-black font-mono text-cyan-400">
+                              -${grossAmount.toFixed(2)} USDT
+                            </span>
+                            <span className="text-[10px] text-slate-400 block">
+                              Net to Send: <strong className="text-emerald-400 font-mono text-xs">${netPayout.toFixed(2)}</strong>
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-base font-black font-mono text-emerald-400">
+                            +${(tx.profitAmount || tx.amount || 0).toFixed(2)} USDT
+                          </span>
+                        )}
+                        
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
                           isPending 
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' 
+                            ? (isWithdrawal ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40')
                             : isCompleted 
                             ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
                             : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
@@ -549,10 +647,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                       </div>
                     </div>
 
+                    {/* DEDICATED WITHDRAWAL DESTINATION WALLET BOX */}
+                    {(isWithdrawal || destAddress) && (
+                      <div className="p-3.5 rounded-xl bg-gradient-to-r from-cyan-950/40 via-[#0a1526] to-cyan-950/30 border-2 border-cyan-500/50 shadow-inner space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-cyan-500/20 pb-1.5">
+                          <div className="flex items-center gap-2">
+                            <Wallet className="w-4 h-4 text-cyan-400" />
+                            <span className="text-xs font-black uppercase tracking-wider text-cyan-300">
+                              TRANSFER TO WALLET ADDRESS ({tx.transferNetwork || tx.network || 'TRC20'})
+                            </span>
+                          </div>
+                          <div className="text-xs font-mono">
+                            <span className="text-slate-400">Dispatch Amount: </span>
+                            <span className="text-emerald-400 font-black text-sm">
+                              ${netPayout.toFixed(2)} USDT
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#040812] p-2.5 rounded-lg border border-cyan-500/30">
+                          <div className="font-mono text-xs sm:text-sm text-cyan-200 select-all break-all font-semibold">
+                            {destAddress || 'Address not found in record'}
+                          </div>
+                          {destAddress && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(destAddress, `addr-${tx.id}`)}
+                              className="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shrink-0 transition-all shadow-md shadow-cyan-500/20 active:scale-95"
+                              title="Copy Destination Wallet Address"
+                            >
+                              {copiedId === `addr-${tx.id}` ? (
+                                <>
+                                  <Check className="w-3.5 h-3.5 text-slate-950" />
+                                  <span>COPIED!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5 text-slate-950" />
+                                  <span>COPY WALLET ADDRESS</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Row 2: Metadata Grid */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-mono text-slate-400 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/80">
                       <div>
-                        <span className="text-slate-500 text-[10px] block">USER ACCOUNT:</span>
+                        <span className="text-slate-500 text-[10px] block">USER ACCOUNT / UID:</span>
                         <span className="text-slate-200 font-semibold truncate block">
                           {tx.userEmail || 'user@goldrobo.io'}
                         </span>
@@ -564,12 +708,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-500 text-[10px] block">BLOCKCHAIN TXID:</span>
+                        <span className="text-slate-500 text-[10px] block">BLOCKCHAIN TXID / HASH:</span>
                         <div className="flex items-center gap-1 text-amber-400">
-                          <span className="truncate max-w-[140px]">{tx.txHash || 'N/A'}</span>
-                          {tx.txHash && (
+                          <span className="truncate max-w-[140px]">{tx.txHash || tx.adminPaidTxHash || 'Awaiting Blockchain Confirmation'}</span>
+                          {(tx.txHash || tx.adminPaidTxHash) && (
                             <button
-                              onClick={() => handleCopy(tx.txHash || '', tx.id)}
+                              onClick={() => handleCopy(tx.txHash || tx.adminPaidTxHash || '', tx.id)}
                               className="text-slate-400 hover:text-white"
                               title="Copy TX Hash"
                             >
@@ -602,10 +746,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
                         <button
                           id={`btn-approve-${tx.id}`}
                           onClick={() => handleApprove(tx)}
-                          className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 text-xs font-black uppercase tracking-wider shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-1.5 active:scale-95"
+                          className={`px-5 py-2 rounded-xl text-slate-950 text-xs font-black uppercase tracking-wider shadow-lg transition-all flex items-center gap-1.5 active:scale-95 ${
+                            isWithdrawal 
+                              ? 'bg-gradient-to-r from-cyan-400 to-teal-400 hover:from-cyan-300 hover:to-teal-300 shadow-cyan-500/20' 
+                              : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 shadow-emerald-500/20'
+                          }`}
                         >
                           <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                          <span>{tx.type === 'deposit' ? 'Approve & Credit Capital' : 'Approve & Release Payout'}</span>
+                          <span>{isWithdrawal ? 'Release Payout & Mark Paid' : 'Approve & Credit Capital'}</span>
                         </button>
                       </div>
                     )}
@@ -616,6 +764,94 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
           )}
         </div>
       </main>
+
+      {/* Withdrawal Payout Modal */}
+      {payoutModalTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg rounded-3xl bg-[#0a101f] border border-cyan-500/40 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-cyan-400">
+              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center">
+                <Wallet className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-white">Send Withdrawal Payout</h4>
+                <span className="text-xs text-slate-400 font-mono">{payoutModalTx.orderId || payoutModalTx.id}</span>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#060a14] border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">User Account:</span>
+                <span className="text-white font-mono font-semibold">{payoutModalTx.userEmail}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Transfer Network:</span>
+                <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold">
+                  {payoutModalTx.transferNetwork || payoutModalTx.network || 'TRC20'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Net Amount to Transfer:</span>
+                <span className="text-emerald-400 font-mono font-black text-base">
+                  ${(payoutModalTx.netPayoutAmount || payoutModalTx.actualAmount || Math.abs(payoutModalTx.profitAmount || 0)).toFixed(2)} USDT
+                </span>
+              </div>
+
+              {/* Destination Address to copy */}
+              <div className="pt-2 border-t border-slate-800">
+                <div className="text-[11px] font-bold text-slate-400 mb-1">RECIPIENT WALLET ADDRESS:</div>
+                <div className="flex items-center gap-2 bg-[#040812] p-2.5 rounded-xl border border-cyan-500/30">
+                  <span className="font-mono text-xs text-cyan-300 select-all break-all flex-1 font-semibold">
+                    {payoutModalTx.withdrawalAddress || payoutModalTx.destinationAddress || 'N/A'}
+                  </span>
+                  {(payoutModalTx.withdrawalAddress || payoutModalTx.destinationAddress) && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(payoutModalTx.withdrawalAddress || payoutModalTx.destinationAddress || '', 'modal-addr')}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs shrink-0 flex items-center gap-1"
+                    >
+                      {copiedId === 'modal-addr' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedId === 'modal-addr' ? 'COPIED' : 'COPY'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-400">Blockchain TXID / Transfer Hash (Optional):</label>
+              <input
+                type="text"
+                value={payoutTxHash}
+                onChange={(e) => setPayoutTxHash(e.target.value)}
+                placeholder="e.g. 0x4f8a... or leave empty to auto-generate verified hash"
+                className="w-full p-2.5 rounded-xl bg-[#060a14] border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-400 font-mono"
+              />
+              <span className="text-[11px] text-slate-500 block">
+                After transferring from your wallet (Binance, OKX, TronLink), click Confirm to update user status to Completed.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setPayoutModalTx(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-payout"
+                onClick={handleConfirmPayout}
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-400 to-teal-400 hover:from-cyan-300 hover:to-teal-300 text-slate-950 text-xs font-black uppercase tracking-wider shadow-lg shadow-cyan-500/30"
+              >
+                Confirm Payout Released
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reject Confirmation Modal */}
       {rejectModalTx && (

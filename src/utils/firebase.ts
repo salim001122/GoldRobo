@@ -107,6 +107,11 @@ export async function syncUserProfileToFirestore(uid: string, data: Record<strin
       }
     }
 
+    // Register identifiers (username and referralCode) in public registry for cross-device lookups
+    if (data.referralCode || data.username) {
+      registerUserIdentifiersInCloud(uid, data.email, data.username || '', data.referralCode || '');
+    }
+
     return { success: true, cloudSynced: true };
   } catch (err: any) {
     // Graceful handling of permission-denied without console.error or crashing
@@ -257,6 +262,7 @@ export function subscribeToUserProfile(
 export const MASTER_SPONSOR_CODES = [
   'GOLD888',
   'VIP777',
+  'VIP888',
   'QUANT999',
   'ROBO2026',
   'ALPHA88',
@@ -265,57 +271,106 @@ export const MASTER_SPONSOR_CODES = [
 ];
 
 /**
- * Validates whether a sponsor/referral code is valid:
- * 1. Checks Master Genesis Codes (e.g. GOLD888)
- * 2. Queries Cloud Firestore for an active registered user who owns this referralCode
- * 3. Checks Cloud referral_codes collection index
- * 4. Checks local cached referral codes
+ * Check if a username is available across the platform (enforces unique usernames)
  */
-export async function validateSponsorCode(code: string): Promise<{
+export async function checkUsernameAvailability(rawUsername: string): Promise<{ available: boolean; message?: string }> {
+  const clean = (rawUsername || '').trim();
+  if (!clean) return { available: false, message: 'Please enter a username.' };
+  if (clean.length < 3) return { available: false, message: 'Username must be at least 3 characters.' };
+  if (clean.length > 20) return { available: false, message: 'Username cannot exceed 20 characters.' };
+  if (!/^[a-zA-Z0-9_]+$/.test(clean)) {
+    return { available: false, message: 'Username can only contain letters, numbers, and underscores (_).' };
+  }
+
+  const normalized = clean.toLowerCase();
+
+  // 1. Check usernames collection in Firestore
+  try {
+    const userDoc = await getDoc(doc(db, 'usernames', normalized));
+    if (userDoc.exists()) {
+      return { available: false, message: `The username "${clean}" is already taken. Please choose another username.` };
+    }
+  } catch (e: any) {
+    console.warn('Check username doc note:', e?.message);
+  }
+
+  // 2. Query users collection
+  try {
+    const usersCol = collection(db, 'users');
+    const q1 = query(usersCol, where('username', '==', clean), limit(1));
+    const snap1 = await getDocs(q1);
+    if (!snap1.empty) {
+      return { available: false, message: `The username "${clean}" is already taken. Please choose another username.` };
+    }
+
+    // Also check case-insensitive match across users
+    const allUsersSnap = await getDocs(usersCol);
+    for (const d of allUsersSnap.docs) {
+      const data = d.data();
+      if (data.username && data.username.toLowerCase() === normalized) {
+        return { available: false, message: `The username "${clean}" is already taken. Please choose another username.` };
+      }
+    }
+  } catch (e: any) {
+    console.warn('Check username query note:', e?.message);
+  }
+
+  // 3. Fallback check local registered accounts
+  try {
+    const localRaw = localStorage.getItem('goldrobo_registered_users_list');
+    if (localRaw) {
+      const list: Array<{ username?: string }> = JSON.parse(localRaw);
+      const exists = list.some(u => u.username && u.username.toLowerCase() === normalized);
+      if (exists) {
+        return { available: false, message: `The username "${clean}" is already taken. Please choose another username.` };
+      }
+    }
+  } catch {}
+
+  return { available: true };
+}
+
+/**
+ * Validates whether a sponsor code OR inviter username is valid across devices:
+ * 1. Checks Master Genesis Codes (e.g. GOLD888, VIP888)
+ * 2. Checks Cloud referral_codes collection index (by code and username)
+ * 3. Checks Cloud usernames collection index
+ * 4. Queries Cloud Firestore users collection (by referralCode or username)
+ * 5. Performs a resilient scan over registered users
+ */
+export async function validateSponsorCode(input: string): Promise<{
   valid: boolean;
   sponsorUid?: string;
   sponsorEmail?: string;
+  sponsorUsername?: string;
+  sponsorReferralCode?: string;
   isMasterCode?: boolean;
   message?: string;
 }> {
-  const cleanCode = (code || '').trim().toUpperCase();
-  if (!cleanCode) {
-    return { valid: false, message: 'Please enter a sponsor / referral code.' };
+  const clean = (input || '').trim();
+  if (!clean) {
+    return { valid: false, message: 'Please enter an inviter username or referral code.' };
   }
 
+  const cleanUpper = clean.toUpperCase();
+  const cleanLower = clean.toLowerCase();
+
   // 1. Check if it's one of the master platform genesis codes
-  if (MASTER_SPONSOR_CODES.includes(cleanCode)) {
+  if (MASTER_SPONSOR_CODES.includes(cleanUpper)) {
     return {
       valid: true,
       sponsorUid: 'genesis_sponsor_gold888',
       sponsorEmail: 'affiliate@goldrobo.io',
+      sponsorUsername: 'GenesisMaster',
+      sponsorReferralCode: cleanUpper,
       isMasterCode: true
     };
   }
 
-  // 2. Query Cloud Firestore users collection to find real registered user
+  // 2. Check Cloud referral_codes lookup registry (stores both code and username)
   try {
-    const usersCol = collection(db, 'users');
-    const q = query(usersCol, where('referralCode', '==', cleanCode), limit(1));
-    const snap = await getDocs(q);
-
-    if (!snap.empty) {
-      const sponsorDoc = snap.docs[0];
-      const sponsorData = sponsorDoc.data();
-      return {
-        valid: true,
-        sponsorUid: sponsorDoc.id,
-        sponsorEmail: sponsorData.email || 'sponsor@goldrobo.io',
-        isMasterCode: false
-      };
-    }
-  } catch (err: any) {
-    console.warn('Firestore referralCode query note:', err?.message);
-  }
-
-  // 3. Check Cloud referral_codes lookup registry
-  try {
-    const refCodeDoc = doc(db, 'referral_codes', cleanCode);
+    // Try uppercase code lookup
+    const refCodeDoc = doc(db, 'referral_codes', cleanUpper);
     const refSnap = await getDoc(refCodeDoc);
     if (refSnap.exists()) {
       const data = refSnap.data();
@@ -323,6 +378,23 @@ export async function validateSponsorCode(code: string): Promise<{
         valid: true,
         sponsorUid: data.uid || '',
         sponsorEmail: data.email || '',
+        sponsorUsername: data.username || '',
+        sponsorReferralCode: data.code || cleanUpper,
+        isMasterCode: false
+      };
+    }
+
+    // Try lowercase username lookup
+    const refUserDoc = doc(db, 'referral_codes', cleanLower);
+    const refUserSnap = await getDoc(refUserDoc);
+    if (refUserSnap.exists()) {
+      const data = refUserSnap.data();
+      return {
+        valid: true,
+        sponsorUid: data.uid || '',
+        sponsorEmail: data.email || '',
+        sponsorUsername: data.username || clean,
+        sponsorReferralCode: data.code || '',
         isMasterCode: false
       };
     }
@@ -330,16 +402,96 @@ export async function validateSponsorCode(code: string): Promise<{
     console.warn('Firestore referral_codes check note:', err?.message);
   }
 
-  // 4. Fallback check local device registered referrals
+  // 3. Check Cloud usernames collection
+  try {
+    const userDoc = doc(db, 'usernames', cleanLower);
+    const userSnap = await getDoc(userDoc);
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      return {
+        valid: true,
+        sponsorUid: data.uid || '',
+        sponsorEmail: data.email || '',
+        sponsorUsername: data.username || clean,
+        sponsorReferralCode: data.referralCode || '',
+        isMasterCode: false
+      };
+    }
+  } catch (err: any) {
+    console.warn('Firestore usernames check note:', err?.message);
+  }
+
+  // 4. Query Cloud Firestore users collection by referralCode or username
+  try {
+    const usersCol = collection(db, 'users');
+
+    // Query 4a: by referralCode
+    const qCode = query(usersCol, where('referralCode', '==', cleanUpper), limit(1));
+    const snapCode = await getDocs(qCode);
+    if (!snapCode.empty) {
+      const docData = snapCode.docs[0].data();
+      // Backfill to cloud registries for fast subsequent lookups
+      registerUserIdentifiersInCloud(snapCode.docs[0].id, docData.email, docData.username, docData.referralCode);
+      return {
+        valid: true,
+        sponsorUid: snapCode.docs[0].id,
+        sponsorEmail: docData.email || 'sponsor@goldrobo.io',
+        sponsorUsername: docData.username || '',
+        sponsorReferralCode: docData.referralCode || cleanUpper,
+        isMasterCode: false
+      };
+    }
+
+    // Query 4b: by exact username
+    const qUser = query(usersCol, where('username', '==', clean), limit(1));
+    const snapUser = await getDocs(qUser);
+    if (!snapUser.empty) {
+      const docData = snapUser.docs[0].data();
+      registerUserIdentifiersInCloud(snapUser.docs[0].id, docData.email, docData.username, docData.referralCode);
+      return {
+        valid: true,
+        sponsorUid: snapUser.docs[0].id,
+        sponsorEmail: docData.email || 'sponsor@goldrobo.io',
+        sponsorUsername: docData.username || clean,
+        sponsorReferralCode: docData.referralCode || '',
+        isMasterCode: false
+      };
+    }
+
+    // Query 4c: Resilient scan across all users in Firestore (case-insensitive match)
+    const allUsersSnap = await getDocs(usersCol);
+    for (const d of allUsersSnap.docs) {
+      const data = d.data();
+      const codeMatch = data.referralCode && data.referralCode.trim().toUpperCase() === cleanUpper;
+      const userMatch = data.username && data.username.trim().toLowerCase() === cleanLower;
+      if (codeMatch || userMatch) {
+        registerUserIdentifiersInCloud(d.id, data.email, data.username, data.referralCode);
+        return {
+          valid: true,
+          sponsorUid: d.id,
+          sponsorEmail: data.email || 'sponsor@goldrobo.io',
+          sponsorUsername: data.username || clean,
+          sponsorReferralCode: data.referralCode || cleanUpper,
+          isMasterCode: false
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn('Firestore users collection search note:', err?.message);
+  }
+
+  // 5. Fallback check local device registered referrals
   try {
     const localRaw = localStorage.getItem('goldrobo_registered_referrals');
     if (localRaw) {
       const list: string[] = JSON.parse(localRaw);
-      if (list.includes(cleanCode)) {
+      if (list.includes(cleanUpper) || list.includes(cleanLower)) {
         return {
           valid: true,
           sponsorUid: 'local_cached_sponsor',
           sponsorEmail: 'referrer@goldrobo.io',
+          sponsorUsername: clean,
+          sponsorReferralCode: cleanUpper,
           isMasterCode: false
         };
       }
@@ -348,124 +500,161 @@ export async function validateSponsorCode(code: string): Promise<{
 
   return {
     valid: false,
-    message: `Invalid sponsor code "${cleanCode}". Please enter a valid referrer invite code (e.g. your inviter's code or default code GOLD888).`
+    message: `Invalid inviter "${clean}". Please enter a valid sponsor username or referral code (e.g. your friend's username, code, or default code GOLD888).`
   };
 }
 
 /**
- * Register user's unique referral code in Cloud Firestore registry
- * so ANY device or browser can instantly validate it!
+ * Register user's unique referral code AND username in Cloud Firestore registry
+ * so ANY other device can instantly validate them by code OR username!
  */
-export async function registerReferralCodeInCloud(code: string, uid: string, email: string) {
-  if (!code || !uid) return;
-  const cleanCode = code.trim().toUpperCase();
+export async function registerUserIdentifiersInCloud(
+  uid: string, 
+  email: string, 
+  username: string, 
+  referralCode: string
+) {
+  if (!uid) return;
+  const cleanCode = (referralCode || '').trim().toUpperCase();
+  const cleanUser = (username || '').trim();
+  const lowerUser = cleanUser.toLowerCase();
 
   // Save to local device registry
   try {
     const localRaw = localStorage.getItem('goldrobo_registered_referrals');
     const list: string[] = localRaw ? JSON.parse(localRaw) : [];
-    if (!list.includes(cleanCode)) {
-      list.push(cleanCode);
-      localStorage.setItem('goldrobo_registered_referrals', JSON.stringify(list));
-    }
+    if (cleanCode && !list.includes(cleanCode)) list.push(cleanCode);
+    if (lowerUser && !list.includes(lowerUser)) list.push(lowerUser);
+    localStorage.setItem('goldrobo_registered_referrals', JSON.stringify(list));
   } catch {}
 
-  // Save to Cloud Firestore
-  try {
-    const refCodeDoc = doc(db, 'referral_codes', cleanCode);
-    await setDoc(refCodeDoc, {
-      code: cleanCode,
-      uid,
-      email,
-      registeredAt: new Date().toISOString()
-    }, { merge: true });
-    console.log('✅ Referral code registered in Cloud Firestore:', cleanCode);
-  } catch (err: any) {
-    console.warn('Referral code cloud registry note:', err?.message);
+  // 1. Save referral code doc in referral_codes
+  if (cleanCode) {
+    try {
+      const refCodeDoc = doc(db, 'referral_codes', cleanCode);
+      await setDoc(refCodeDoc, {
+        code: cleanCode,
+        uid,
+        email,
+        username: cleanUser,
+        type: 'referralCode',
+        registeredAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err: any) {
+      console.warn('Referral code registry note:', err?.message);
+    }
   }
+
+  // 2. Save username in referral_codes so typing username in invite box matches directly
+  if (lowerUser) {
+    try {
+      const refUserDoc = doc(db, 'referral_codes', lowerUser);
+      await setDoc(refUserDoc, {
+        code: cleanCode,
+        uid,
+        email,
+        username: cleanUser,
+        type: 'username',
+        registeredAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err: any) {
+      console.warn('Username in referral_codes note:', err?.message);
+    }
+
+    // 3. Save to usernames collection for uniqueness tracking
+    try {
+      const usernameDoc = doc(db, 'usernames', lowerUser);
+      await setDoc(usernameDoc, {
+        username: cleanUser,
+        referralCode: cleanCode,
+        uid,
+        email,
+        registeredAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err: any) {
+      console.warn('Usernames collection note:', err?.message);
+    }
+  }
+
+  console.log(`✅ Registered identifiers in Cloud Firestore: Code=${cleanCode}, Username=${cleanUser}`);
 }
+
+// Backward-compatible alias
+export const registerReferralCodeInCloud = (code: string, uid: string, email: string) => {
+  return registerUserIdentifiersInCloud(uid, email, '', code);
+};
 
 /**
  * Tracks real referral relationship when a new user signs up:
- * Links the user to their sponsor and increments sponsor's referral counts
+ * Links the user to their sponsor and increments sponsor's referral counts.
+ * Works seamlessly whether sponsor was identified by username or referral code!
  */
 export async function recordReferralRelationship(
-  sponsorCode: string,
+  sponsorCodeOrUsername: string,
   newUserId: string,
   newUserEmail: string
 ) {
-  if (!sponsorCode || !newUserId) return;
-  const cleanCode = sponsorCode.trim().toUpperCase();
+  if (!sponsorCodeOrUsername || !newUserId) return;
+  const cleanInput = sponsorCodeOrUsername.trim();
 
   try {
-    // 1. Find sponsor in Firestore users collection
-    let sponsorUid: string | null = null;
+    // 1. Validate and resolve sponsor UID
+    const resolved = await validateSponsorCode(cleanInput);
+    if (!resolved.valid || resolved.isMasterCode || !resolved.sponsorUid) {
+      console.log('Genesis master sponsor or unrecognized sponsor, skipping sponsor profile increment');
+      return;
+    }
+
+    const sponsorUid = resolved.sponsorUid;
+
+    // Fetch current sponsor data from users
     let currentSponsorData: any = null;
+    try {
+      const spSnap = await getDoc(doc(db, 'users', sponsorUid));
+      if (spSnap.exists()) currentSponsorData = spSnap.data();
+    } catch {}
 
-    if (!MASTER_SPONSOR_CODES.includes(cleanCode)) {
-      const usersCol = collection(db, 'users');
-      const q = query(usersCol, where('referralCode', '==', cleanCode), limit(1));
-      const snap = await getDocs(q);
+    // Record referred member under sponsor's referrals subcollection
+    const referralRecord = {
+      uid: newUserId,
+      email: newUserEmail,
+      joinedAt: new Date().toISOString(),
+      hasDeposited: false,
+      totalDeposit: 0.00,
+      level: 1,
+      status: 'Active Member'
+    };
 
-      if (!snap.empty) {
-        sponsorUid = snap.docs[0].id;
-        currentSponsorData = snap.docs[0].data();
-      } else {
-        // Try referral_codes lookup
-        const refDoc = await getDoc(doc(db, 'referral_codes', cleanCode));
-        if (refDoc.exists()) {
-          sponsorUid = refDoc.data().uid;
-          if (sponsorUid) {
-            const spSnap = await getDoc(doc(db, 'users', sponsorUid));
-            if (spSnap.exists()) currentSponsorData = spSnap.data();
-          }
-        }
-      }
+    try {
+      await setDoc(doc(db, 'users', sponsorUid, 'referrals', newUserId), referralRecord);
+    } catch (subErr: any) {
+      console.warn('Referral subcollection note:', subErr?.message);
     }
 
-    if (sponsorUid) {
-      // Record referred member under sponsor's referrals subcollection
-      const referralRecord = {
-        uid: newUserId,
-        email: newUserEmail,
-        joinedAt: new Date().toISOString(),
-        hasDeposited: false,
-        totalDeposit: 0.00,
-        level: 1,
-        status: 'Active Member'
-      };
+    // Increment validReferralsCount / totalReferrals on sponsor doc
+    const updatedCount = (currentSponsorData?.validReferralsCount || 0) + 1;
+    await setDoc(doc(db, 'users', sponsorUid), {
+      validReferralsCount: updatedCount,
+      totalReferralsCount: updatedCount,
+      lastReferralAt: new Date().toISOString()
+    }, { merge: true });
 
-      try {
-        await setDoc(doc(db, 'users', sponsorUid, 'referrals', newUserId), referralRecord);
-      } catch (subErr: any) {
-        console.warn('Referral subcollection note:', subErr?.message);
-      }
-
-      // Increment validReferralsCount / totalReferrals on sponsor doc
-      const updatedCount = (currentSponsorData?.validReferralsCount || 0) + 1;
-      await setDoc(doc(db, 'users', sponsorUid), {
-        validReferralsCount: updatedCount,
-        totalReferralsCount: updatedCount,
-        lastReferralAt: new Date().toISOString()
-      }, { merge: true });
-
-      // Also if sponsor is currently logged in on this browser, update local state
-      try {
-        const rawUser = localStorage.getItem('goldrobo_user_state');
-        if (rawUser) {
-          const u = JSON.parse(rawUser);
-          if (u.uid === sponsorUid || u.referralCode === cleanCode) {
-            u.validReferralsCount = updatedCount;
-            localStorage.setItem('goldrobo_user_state', JSON.stringify(u));
-            window.dispatchEvent(new CustomEvent('goldrobo_referral_updated', { 
-              detail: { validReferralsCount: updatedCount } 
-            }));
-          }
+    // Also if sponsor is currently logged in on this browser, update local state
+    try {
+      const rawUser = localStorage.getItem('goldrobo_user_state');
+      if (rawUser) {
+        const u = JSON.parse(rawUser);
+        if (u.uid === sponsorUid || u.referralCode === cleanInput.toUpperCase() || u.username === cleanInput) {
+          u.validReferralsCount = updatedCount;
+          localStorage.setItem('goldrobo_user_state', JSON.stringify(u));
+          window.dispatchEvent(new CustomEvent('goldrobo_referral_updated', { 
+            detail: { validReferralsCount: updatedCount } 
+          }));
         }
-      } catch {}
+      }
+    } catch {}
 
-      console.log(`✅ Recorded referral relationship: ${newUserEmail} -> sponsor ${sponsorUid} (${cleanCode})`);
-    }
+    console.log(`✅ Recorded referral relationship: ${newUserEmail} -> sponsor ${sponsorUid} (${cleanInput})`);
   } catch (err: any) {
     console.warn('Error recording referral relationship:', err?.message);
   }

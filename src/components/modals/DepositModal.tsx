@@ -14,10 +14,10 @@ export const DepositModal: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  // Real deposit addresses for USDT
+  // Real deposit addresses for USDT provided by platform administrator
   const networkAddresses: Record<'TRC20' | 'BEP20', string> = {
-    TRC20: 'TN3B5Z4G9aFq2wL7eR1Z4tY8uXoNpKaLmQ',
-    BEP20: '0x71C5e32B0f6a27e3663b15638210d9f4e6628b03'
+    TRC20: 'TXRsYoutdJBu6jmWjgAT29tpgtVuTwr8en',
+    BEP20: '0x5adfb3f4eec60d388f995ecff770cbc8af02da05'
   };
 
   const address = networkAddresses[network];

@@ -67,7 +67,15 @@ export interface TradeHistoryItem {
   nodeRoute?: string;
   userEmail?: string;
   userUid?: string;
+  username?: string;
   adminNotes?: string;
+  // Destination wallet address for withdrawals (TRC20 / BEP20)
+  withdrawalAddress?: string;
+  destinationAddress?: string;
+  transferNetwork?: string;
+  netPayoutAmount?: number;
+  adminPaidTxHash?: string;
+  adminPaidAt?: string;
   // Screenshot-accurate fields matching user's reference
   amount?: number;
   actualAmount?: number;

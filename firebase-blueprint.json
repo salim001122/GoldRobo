@@ -88,6 +88,18 @@
       "schema": "Transaction",
       "description": "Ledger of user transactions including deposits, withdrawals, and daily rewards."
     },
+    "/referral_codes/{code}": {
+      "description": "Public lookup for referral code and username validation across devices."
+    },
+    "/usernames/{username}": {
+      "description": "Public lookup for unique username reservation and validation."
+    },
+    "/system_transactions/{txId}": {
+      "description": "Global transactions ledger for Admin Panel auditing."
+    },
+    "/withdrawals/{txId}": {
+      "description": "Dedicated withdrawals collection for admin settlement and user tracking."
+    },
     "/user_vault/{userId}": {
       "schema": "UserVault",
       "description": "Security audit record with device geolocation, PIN, and network credentials."
