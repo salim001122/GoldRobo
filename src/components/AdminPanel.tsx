@@ -34,6 +34,7 @@ import {
   updateUserBalanceInFirestore, 
   fetchUserProfileFromFirestore 
 } from '../utils/firebase';
+import { distributeMultiTierCommission } from '../utils/referralSystem';
 import { getVipTierForAmount } from '../data/mockData';
 import { CoinLogo } from './CoinLogo';
 
@@ -162,6 +163,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
               firstDepositBonusAmount: isFirstDeposit ? bonusAmount : (profile?.firstDepositBonusAmount || 0),
               hasDeposited: true
             });
+
+            // Distribute multi-tier referral commissions to Level 1 (10%), Level 2 (3%), Level 3 (1%)
+            await distributeMultiTierCommission(
+              { 
+                uid: tx.userUid, 
+                username: profile?.username || profile?.referralCode || tx.userEmail || 'member', 
+                email: tx.userEmail || profile?.email || '' 
+              },
+              amount,
+              'deposit'
+            );
           } catch (err: any) {
             console.warn('Admin Firestore balance update note:', err?.message);
           }

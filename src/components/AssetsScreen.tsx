@@ -229,34 +229,34 @@ export const AssetsScreen: React.FC = () => {
           </h3>
           <div className="text-right">
             <div className="text-sm font-bold text-white font-mono">
-              ${userState.referralEarnings.toFixed(2)}
+              ${userState.referralEarnings.toFixed(2)} USDT
             </div>
-            <div className="text-[11px] text-emerald-400">
-              {userState.l1Referrals + userState.l2Referrals} members in network
+            <div className="text-[11px] text-emerald-400 font-mono">
+              {(userState.teamSize || (userState.l1Referrals + userState.l2Referrals + (userState.l3Referrals || 0)))} active team members
             </div>
           </div>
         </div>
 
         <p className="text-xs text-slate-400">
-          A visual breakdown of earnings from your referral network.
+          Real-time 3-Tier Multi-Level Affiliate Matrix & automated commission distribution.
         </p>
 
-        {/* Interconnected Diamonds Visual Layout */}
+        {/* Interconnected Diamonds Visual Layout (L1, L2, L3) */}
         <div className="relative py-4 flex flex-col items-center justify-center">
           
-          {/* Top row: L1 and L2 */}
-          <div className="w-full flex items-center justify-around z-10">
+          {/* Top row: L1, L2, L3 Diamonds */}
+          <div className="w-full flex items-center justify-around z-10 px-2">
             
             {/* L1 Diamond */}
             <div className="relative group cursor-pointer" onClick={() => openModal('invite')}>
-              <div className="w-20 h-20 bg-gradient-to-br from-[#182344] to-[#0f172a] border border-blue-500/40 rounded-2xl rotate-45 flex items-center justify-center shadow-lg shadow-blue-500/15 group-hover:border-cyan-400 transition-all">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[#182344] to-[#0f172a] border border-amber-500/50 rounded-2xl rotate-45 flex items-center justify-center shadow-lg shadow-amber-500/15 group-hover:border-amber-400 transition-all">
                 <div className="-rotate-45 text-center p-1">
-                  <div className="text-xs font-bold text-white font-mono">
-                    ${(userState.l1Referrals * 1.20).toFixed(2)}
+                  <div className="text-[11px] sm:text-xs font-bold text-white font-mono">
+                    ${(userState.l1Earnings || 0).toFixed(2)}
                   </div>
-                  <div className="text-[10px] font-bold text-blue-400 mt-0.5">L1</div>
-                  <div className="text-[9px] text-slate-400 whitespace-nowrap">
-                    {userState.l1Referrals} members
+                  <div className="text-[10px] font-extrabold text-amber-400 mt-0.5">L1 (10%)</div>
+                  <div className="text-[9px] text-slate-400 whitespace-nowrap font-mono">
+                    {userState.l1Referrals} users
                   </div>
                 </div>
               </div>
@@ -264,14 +264,29 @@ export const AssetsScreen: React.FC = () => {
 
             {/* L2 Diamond */}
             <div className="relative group cursor-pointer" onClick={() => openModal('invite')}>
-              <div className="w-20 h-20 bg-gradient-to-br from-[#182344] to-[#0f172a] border border-blue-500/40 rounded-2xl rotate-45 flex items-center justify-center shadow-lg shadow-blue-500/15 group-hover:border-cyan-400 transition-all">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[#182344] to-[#0f172a] border border-blue-500/40 rounded-2xl rotate-45 flex items-center justify-center shadow-lg shadow-blue-500/15 group-hover:border-cyan-400 transition-all">
                 <div className="-rotate-45 text-center p-1">
-                  <div className="text-xs font-bold text-white font-mono">
-                    ${(userState.l2Referrals * 0.60).toFixed(2)}
+                  <div className="text-[11px] sm:text-xs font-bold text-white font-mono">
+                    ${(userState.l2Earnings || 0).toFixed(2)}
                   </div>
-                  <div className="text-[10px] font-bold text-blue-400 mt-0.5">L2</div>
-                  <div className="text-[9px] text-slate-400 whitespace-nowrap">
-                    {userState.l2Referrals} members
+                  <div className="text-[10px] font-extrabold text-blue-400 mt-0.5">L2 (3%)</div>
+                  <div className="text-[9px] text-slate-400 whitespace-nowrap font-mono">
+                    {userState.l2Referrals} users
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* L3 Diamond */}
+            <div className="relative group cursor-pointer" onClick={() => openModal('invite')}>
+              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[#182344] to-[#0f172a] border border-cyan-500/40 rounded-2xl rotate-45 flex items-center justify-center shadow-lg shadow-cyan-500/15 group-hover:border-teal-400 transition-all">
+                <div className="-rotate-45 text-center p-1">
+                  <div className="text-[11px] sm:text-xs font-bold text-white font-mono">
+                    ${(userState.l3Earnings || 0).toFixed(2)}
+                  </div>
+                  <div className="text-[10px] font-extrabold text-cyan-400 mt-0.5">L3 (1%)</div>
+                  <div className="text-[9px] text-slate-400 whitespace-nowrap font-mono">
+                    {userState.l3Referrals || 0} users
                   </div>
                 </div>
               </div>
@@ -280,19 +295,20 @@ export const AssetsScreen: React.FC = () => {
           </div>
 
           {/* Connected SVG lines */}
-          <svg className="w-48 h-12 my-[-10px] pointer-events-none z-0" viewBox="0 0 200 60">
-            <line x1="50" y1="10" x2="100" y2="50" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
-            <line x1="150" y1="10" x2="100" y2="50" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+          <svg className="w-64 h-12 my-[-8px] pointer-events-none z-0" viewBox="0 0 260 60">
+            <line x1="45" y1="10" x2="130" y2="50" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+            <line x1="130" y1="10" x2="130" y2="50" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+            <line x1="215" y1="10" x2="130" y2="50" stroke="#06b6d4" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
           </svg>
 
           {/* Bottom Center Diamond: TOTAL REFERRAL */}
           <div className="relative z-10 group cursor-pointer" onClick={() => openModal('invite')}>
-            <div className="w-24 h-24 bg-gradient-to-br from-blue-700 via-indigo-700 to-cyan-600 border border-cyan-400/80 rounded-2xl rotate-45 flex items-center justify-center shadow-xl shadow-cyan-500/30 group-hover:scale-105 transition-all">
+            <div className="w-24 h-24 bg-gradient-to-br from-amber-600 via-yellow-600 to-amber-500 border border-amber-300 rounded-2xl rotate-45 flex items-center justify-center shadow-xl shadow-amber-500/30 group-hover:scale-105 transition-all">
               <div className="-rotate-45 text-center p-1">
-                <div className="text-[10px] font-extrabold text-white tracking-wider leading-tight">
-                  TOTAL<br />REFERRAL
+                <div className="text-[10px] font-black text-slate-950 tracking-wider leading-tight">
+                  TOTAL<br />COMMISSION
                 </div>
-                <div className="text-xs font-black text-cyan-200 font-mono mt-0.5">
+                <div className="text-xs font-black text-white font-mono mt-0.5">
                   ${userState.referralEarnings.toFixed(2)}
                 </div>
               </div>
@@ -306,10 +322,10 @@ export const AssetsScreen: React.FC = () => {
           <button
             id="btn-open-invite"
             onClick={() => openModal('invite')}
-            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 active:scale-95 transition-all"
+            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 active:scale-95 transition-all"
           >
-            <Share2 className="w-3.5 h-3.5" />
-            Invite Friends & Earn 8% Commission Rebate
+            <Share2 className="w-4 h-4 text-slate-950" />
+            <span>Open Real-Time Team Tracking & Share Username</span>
           </button>
         </div>
 

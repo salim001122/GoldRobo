@@ -54,7 +54,9 @@ export const RobotScreen: React.FC = () => {
   const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
   const lastTs = userState.lastQuantifyTimestamp || (userState.lastQuantifyDate ? new Date(userState.lastQuantifyDate).getTime() : 0);
   const nextAllowedAt = userState.nextQuantifyAllowedAt || (lastTs > 0 ? (lastTs + COOLDOWN_24H_MS) : 0);
-  const isCooldownActive = lastTs > 0 && Date.now() < nextAllowedAt;
+  const [isCooldownActive, setIsCooldownActive] = useState<boolean>(() => {
+    return lastTs > 0 && Date.now() < nextAllowedAt;
+  });
 
   useEffect(() => {
     const updateTime = () => {
@@ -67,8 +69,10 @@ export const RobotScreen: React.FC = () => {
       const nowMs = Date.now();
       const currentLastTs = userState.lastQuantifyTimestamp || (userState.lastQuantifyDate ? new Date(userState.lastQuantifyDate).getTime() : 0);
       const currentNextAllowed = userState.nextQuantifyAllowedAt || (currentLastTs > 0 ? (currentLastTs + COOLDOWN_24H_MS) : 0);
+      const active = currentLastTs > 0 && nowMs < currentNextAllowed;
+      setIsCooldownActive(active);
 
-      if (currentLastTs > 0 && nowMs < currentNextAllowed) {
+      if (active) {
         const diffMs = Math.max(0, currentNextAllowed - nowMs);
         const remH = String(Math.floor(diffMs / (1000 * 60 * 60))).padStart(2, '0');
         const remM = String(Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))).padStart(2, '0');

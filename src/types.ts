@@ -106,6 +106,41 @@ export interface ReferralTier {
   earned: number;
 }
 
+export interface ReferralMember {
+  id: string; // unique ID
+  sponsorUid: string;
+  sponsorUsername: string;
+  memberUid: string;
+  memberUsername: string;
+  memberEmail: string;
+  level: 1 | 2 | 3;
+  directInviterUsername: string;
+  joinedAt: string;
+  joinedTimestamp: number;
+  totalDeposit: number;
+  commissionEarned: number;
+  status: 'Active' | 'Deposited' | 'Inactive';
+  vipLevel: number;
+}
+
+export interface ReferralCommissionLog {
+  id: string;
+  sponsorUid: string;
+  sponsorUsername: string;
+  fromUsername: string;
+  fromUid: string;
+  fromEmail?: string;
+  level: 1 | 2 | 3;
+  percent: number;
+  sourceAmount: number;
+  commissionAmount: number;
+  type: 'deposit_commission' | 'quantify_commission' | 'welcome_bonus';
+  timestamp: string;
+  dateStr: string;
+  timeStr: string;
+  status: 'Completed';
+}
+
 export interface UserState {
   uid: string;
   email: string;
@@ -140,6 +175,12 @@ export interface UserState {
   referralEarnings: number;
   l1Referrals: number;
   l2Referrals: number;
+  l3Referrals: number;
+  l1Earnings?: number;
+  l2Earnings?: number;
+  l3Earnings?: number;
+  teamRecharge?: number;
+  teamSize?: number;
   securityPin?: string;
   twoFactorEnabled?: boolean;
   twoFactorSecret?: string;

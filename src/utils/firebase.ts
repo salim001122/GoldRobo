@@ -500,7 +500,7 @@ export async function validateSponsorCode(input: string): Promise<{
 
   return {
     valid: false,
-    message: `Invalid inviter "${clean}". Please enter a valid sponsor username or referral code (e.g. your friend's username, code, or default code GOLD888).`
+    message: `Invalid inviter "${clean}". Please enter a valid registered sponsor username.`
   };
 }
 

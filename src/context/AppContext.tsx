@@ -26,9 +26,11 @@ import {
   onAuthStateChanged,
   fetchUserProfileFromFirestore,
   fetchUserTransactionsFromFirestore,
-  subscribeToUserProfile
+  subscribeToUserProfile,
+  registerUserIdentifiersInCloud
 } from '../utils/firebase';
 import { saveSystemTransaction } from '../utils/adminTransactions';
+import { distributeMultiTierCommission } from '../utils/referralSystem';
 import { getTranslation } from '../utils/translations';
 
 interface AppContextType {
@@ -88,6 +90,34 @@ const STORAGE_KEY_BONUSES = 'goldrobo_bonuses_v4';
 const STORAGE_KEY_TASKS = 'goldrobo_tasks_v4';
 const STORAGE_KEY_AUTH = 'goldrobo_auth_session_v4';
 
+/**
+ * Resolves authoritative username and guarantees referralCode is 100% the username!
+ * Purges any legacy "GOLD..." placeholder codes so only the real username acts as referral code.
+ */
+export function resolveUsernameAndReferralCode(raw: {
+  username?: string | null;
+  referralCode?: string | null;
+  email?: string | null;
+}): { username: string; referralCode: string } {
+  const emailPrefix = (raw.email && raw.email.includes('@')) ? raw.email.split('@')[0].trim() : '';
+  let finalUser = '';
+
+  if (raw.username && raw.username.trim() && !raw.username.trim().toUpperCase().startsWith('GOLD')) {
+    finalUser = raw.username.trim();
+  } else if (emailPrefix) {
+    finalUser = emailPrefix;
+  } else if (raw.referralCode && raw.referralCode.trim() && !raw.referralCode.trim().toUpperCase().startsWith('GOLD')) {
+    finalUser = raw.referralCode.trim();
+  } else if (raw.username && raw.username.trim()) {
+    finalUser = raw.username.trim();
+  }
+
+  return {
+    username: finalUser,
+    referralCode: finalUser
+  };
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTabState] = useState<NavigationTab>('home');
   const [coins, setCoins] = useState<CreatorCoin[]>(INITIAL_CREATOR_COINS);
@@ -129,9 +159,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const rangeTier = getVipTierForAmount(activeCap);
         const vipLevel = parsed.vipLevel !== undefined ? parsed.vipLevel : (rangeTier ? rangeTier.level : (totalBal >= 10 ? 1 : 0));
         const matchingTier = VIP_TIERS.find(v => v.level === vipLevel) || rangeTier;
+
+        // Resolve username and ensure referral code is username (never old GOLD... code)
+        const { username: cleanUser, referralCode: cleanCode } = resolveUsernameAndReferralCode({
+          username: parsed.username,
+          referralCode: parsed.referralCode,
+          email: parsed.email
+        });
+
         return {
           ...INITIAL_USER_STATE,
           ...parsed,
+          username: cleanUser || parsed.username || '',
+          referralCode: cleanCode || cleanUser || '',
           maxDailyQuantifiable: 1, // 1 quantify daily for all users
           todayQuantifiableCount: effectiveCount,
           lastQuantifyTimestamp: lastQuantifyMs,
@@ -232,50 +272,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!remoteProfile) return;
 
       setUserState(prev => {
-        // Protect user's balance and profit from stale/zero overwrite
-        const remoteTotal = remoteProfile.totalBalance !== undefined && remoteProfile.totalBalance !== null
+        // Authoritative Firestore balances - exact values without corrupting Math.max
+        const updatedTotal = remoteProfile.totalBalance !== undefined && remoteProfile.totalBalance !== null
           ? +Number(remoteProfile.totalBalance).toFixed(2)
-          : undefined;
-        const remoteWithdrawable = remoteProfile.withdrawableBalance !== undefined && remoteProfile.withdrawableBalance !== null
+          : prev.totalBalance;
+        const updatedWithdrawable = remoteProfile.withdrawableBalance !== undefined && remoteProfile.withdrawableBalance !== null
           ? +Number(remoteProfile.withdrawableBalance).toFixed(2)
-          : undefined;
-        const remoteLocked = remoteProfile.lockedInvestment !== undefined && remoteProfile.lockedInvestment !== null
+          : prev.withdrawableBalance;
+        const updatedLocked = remoteProfile.lockedInvestment !== undefined && remoteProfile.lockedInvestment !== null
           ? +Number(remoteProfile.lockedInvestment).toFixed(2)
-          : undefined;
-        const remoteBonus = remoteProfile.bonusBalance !== undefined && remoteProfile.bonusBalance !== null
+          : prev.lockedInvestment;
+        const updatedBonus = remoteProfile.bonusBalance !== undefined && remoteProfile.bonusBalance !== null
           ? +Number(remoteProfile.bonusBalance).toFixed(2)
-          : undefined;
-
-        // Compare update timestamps
-        const remoteUpdatedAt = remoteProfile.updatedAt ? new Date(remoteProfile.updatedAt).getTime() : 0;
-        const localUpdatedAt = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
-        const isRemoteNewer = remoteUpdatedAt > localUpdatedAt;
-
-        let updatedTotal = prev.totalBalance;
-        let updatedWithdrawable = prev.withdrawableBalance;
-        let updatedLocked = prev.lockedInvestment;
-        let updatedBonus = prev.bonusBalance;
-
-        if (isRemoteNewer) {
-          if (remoteTotal !== undefined) updatedTotal = remoteTotal;
-          if (remoteWithdrawable !== undefined) updatedWithdrawable = remoteWithdrawable;
-          if (remoteLocked !== undefined) updatedLocked = remoteLocked;
-          if (remoteBonus !== undefined) updatedBonus = remoteBonus;
-        } else {
-          // Never overwrite an existing positive balance with 0 on refresh
-          if (remoteTotal !== undefined) {
-            updatedTotal = (remoteTotal > 0 || prev.totalBalance === 0) ? Math.max(remoteTotal, prev.totalBalance) : prev.totalBalance;
-          }
-          if (remoteWithdrawable !== undefined) {
-            updatedWithdrawable = (remoteWithdrawable > 0 || prev.withdrawableBalance === 0) ? Math.max(remoteWithdrawable, prev.withdrawableBalance) : prev.withdrawableBalance;
-          }
-          if (remoteLocked !== undefined) {
-            updatedLocked = (remoteLocked > 0 || prev.lockedInvestment === 0) ? Math.max(remoteLocked, prev.lockedInvestment) : prev.lockedInvestment;
-          }
-          if (remoteBonus !== undefined) {
-            updatedBonus = Math.max(remoteBonus, prev.bonusBalance);
-          }
-        }
+          : prev.bonusBalance;
 
         const effectiveCapital = updatedLocked > 0 ? updatedLocked : updatedTotal;
         const rangeTier = getVipTierForAmount(effectiveCapital);
@@ -314,14 +323,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           vipLevel: effectiveVip,
           dailyEarningRate: effectiveDailyRate,
           validReferralsCount: updatedReferrals,
+          referralEarnings: remoteProfile.referralEarnings !== undefined ? Number(remoteProfile.referralEarnings) : prev.referralEarnings,
+          l1Referrals: remoteProfile.l1Referrals !== undefined ? Number(remoteProfile.l1Referrals) : prev.l1Referrals,
+          l2Referrals: remoteProfile.l2Referrals !== undefined ? Number(remoteProfile.l2Referrals) : prev.l2Referrals,
+          l3Referrals: remoteProfile.l3Referrals !== undefined ? Number(remoteProfile.l3Referrals) : (prev.l3Referrals || 0),
+          l1Earnings: remoteProfile.l1Earnings !== undefined ? Number(remoteProfile.l1Earnings) : (prev.l1Earnings || 0),
+          l2Earnings: remoteProfile.l2Earnings !== undefined ? Number(remoteProfile.l2Earnings) : (prev.l2Earnings || 0),
+          l3Earnings: remoteProfile.l3Earnings !== undefined ? Number(remoteProfile.l3Earnings) : (prev.l3Earnings || 0),
+          teamSize: remoteProfile.teamSize !== undefined ? Number(remoteProfile.teamSize) : (prev.teamSize || 0),
+          teamRecharge: remoteProfile.teamRecharge !== undefined ? Number(remoteProfile.teamRecharge) : (prev.teamRecharge || 0),
           lastQuantifyTimestamp: effectiveLastTs,
           nextQuantifyAllowedAt: isCooldownActive ? effectiveNextAllowed : 0,
           todayQuantifiableCount: isCooldownActive ? 1 : 0,
           lastQuantifyDate: effectiveLastTs > 0 ? new Date(effectiveLastTs).toISOString() : prev.lastQuantifyDate,
-          username: remoteProfile.username || prev.username,
+          ...(() => {
+            const { username: effUser, referralCode: effCode } = resolveUsernameAndReferralCode({
+              username: remoteProfile.username || prev.username,
+              referralCode: remoteProfile.referralCode || prev.referralCode,
+              email: prev.email || remoteProfile.email
+            });
+
+            // If remote Firestore had an old GOLD code or mismatched referral code, auto-sync and fix it
+            if (userState.uid && effCode && (remoteProfile.referralCode !== effCode || !remoteProfile.username)) {
+              syncUserProfileToFirestore(userState.uid, {
+                username: effUser,
+                referralCode: effCode
+              }).catch(() => {});
+              registerUserIdentifiersInCloud(userState.uid, prev.email || remoteProfile.email || '', effUser, effCode).catch(() => {});
+            }
+
+            return {
+              username: effUser || prev.username,
+              referralCode: effCode || effUser || prev.referralCode
+            };
+          })(),
           selectedLanguage: remoteProfile.selectedLanguage || prev.selectedLanguage,
           sponsorCode: remoteProfile.sponsorCode || prev.sponsorCode,
-          referralCode: remoteProfile.referralCode || prev.referralCode,
           securityPin: remoteProfile.securityPin || prev.securityPin,
           twoFactorEnabled: remoteProfile.twoFactorEnabled !== undefined ? !!remoteProfile.twoFactorEnabled : prev.twoFactorEnabled,
           hasReceivedFirstDepositBonus: remoteProfile.hasReceivedFirstDepositBonus !== undefined ? !!remoteProfile.hasReceivedFirstDepositBonus : prev.hasReceivedFirstDepositBonus,
@@ -743,40 +780,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const remoteProfile = await fetchUserProfileFromFirestore(fbUser.uid);
           if (remoteProfile) {
             setUserState(prev => {
-              // Remote balances vs local balances: prevent stale/zero overwriting
-              const remoteTotal = remoteProfile.totalBalance !== undefined && remoteProfile.totalBalance !== null
+              // Direct authoritative Firestore balances
+              const totalBal = remoteProfile.totalBalance !== undefined && remoteProfile.totalBalance !== null
                 ? +Number(remoteProfile.totalBalance).toFixed(2)
-                : undefined;
-              const remoteWithdrawable = remoteProfile.withdrawableBalance !== undefined && remoteProfile.withdrawableBalance !== null
+                : prev.totalBalance;
+              const withdrawableBal = remoteProfile.withdrawableBalance !== undefined && remoteProfile.withdrawableBalance !== null
                 ? +Number(remoteProfile.withdrawableBalance).toFixed(2)
-                : undefined;
-              const remoteLocked = remoteProfile.lockedInvestment !== undefined && remoteProfile.lockedInvestment !== null
+                : prev.withdrawableBalance;
+              const lockedBal = remoteProfile.lockedInvestment !== undefined && remoteProfile.lockedInvestment !== null
                 ? +Number(remoteProfile.lockedInvestment).toFixed(2)
-                : undefined;
-
-              const remoteUpdatedAt = remoteProfile.updatedAt ? new Date(remoteProfile.updatedAt).getTime() : 0;
-              const localUpdatedAt = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
-              const isRemoteNewer = remoteUpdatedAt > localUpdatedAt;
-
-              let totalBal = prev.totalBalance;
-              let withdrawableBal = prev.withdrawableBalance;
-              let lockedBal = prev.lockedInvestment;
-
-              if (isRemoteNewer) {
-                if (remoteTotal !== undefined) totalBal = remoteTotal;
-                if (remoteWithdrawable !== undefined) withdrawableBal = remoteWithdrawable;
-                if (remoteLocked !== undefined) lockedBal = remoteLocked;
-              } else {
-                if (remoteTotal !== undefined) {
-                  totalBal = (remoteTotal > 0 || prev.totalBalance === 0) ? Math.max(remoteTotal, prev.totalBalance) : prev.totalBalance;
-                }
-                if (remoteWithdrawable !== undefined) {
-                  withdrawableBal = (remoteWithdrawable > 0 || prev.withdrawableBalance === 0) ? Math.max(remoteWithdrawable, prev.withdrawableBalance) : prev.withdrawableBalance;
-                }
-                if (remoteLocked !== undefined) {
-                  lockedBal = (remoteLocked > 0 || prev.lockedInvestment === 0) ? Math.max(remoteLocked, prev.lockedInvestment) : prev.lockedInvestment;
-                }
-              }
+                : prev.lockedInvestment;
+              const bonusBal = remoteProfile.bonusBalance !== undefined && remoteProfile.bonusBalance !== null
+                ? +Number(remoteProfile.bonusBalance).toFixed(2)
+                : prev.bonusBalance;
 
               // Strict 24-Hour Cooldown Synchronization
               const COOLDOWN_24H_MS = 24 * 60 * 60 * 1000;
@@ -798,19 +814,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 : (rangeTier ? rangeTier.level : (totalBal >= 10 ? 1 : 0));
               const tier = VIP_TIERS.find(v => v.level === vipLvl) || rangeTier;
 
-              // If local had a higher balance, sync it up to Firestore
-              if (prev.totalBalance > (remoteProfile.totalBalance || 0) || prev.withdrawableBalance > (remoteProfile.withdrawableBalance || 0)) {
-                syncUserProfileToFirestore(fbUser.uid, {
-                  totalBalance: totalBal,
-                  withdrawableBalance: withdrawableBal,
-                  lockedInvestment: lockedBal,
-                  lastQuantifyTimestamp: effectiveLastTs,
-                  nextQuantifyAllowedAt: isCooldownActive ? effectiveNextAllowed : 0,
-                  todayQuantifiableCount: isCooldownActive ? 1 : 0,
-                  updatedAt: new Date().toISOString()
-                });
-              }
-
               return {
                 ...prev,
                 uid: fbUser.uid,
@@ -818,15 +821,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 totalBalance: totalBal,
                 withdrawableBalance: withdrawableBal,
                 lockedInvestment: lockedBal,
-                bonusBalance: +(remoteProfile.bonusBalance ?? prev.bonusBalance),
+                bonusBalance: bonusBal,
                 vipLevel: vipLvl,
                 dailyEarningRate: remoteProfile.dailyEarningRate !== undefined ? Number(remoteProfile.dailyEarningRate) : (tier ? tier.profitRateNum : (vipLvl > 0 ? 3.0 : 0.0)),
                 validReferralsCount: remoteProfile.validReferralsCount !== undefined ? Number(remoteProfile.validReferralsCount) : prev.validReferralsCount,
+                referralEarnings: remoteProfile.referralEarnings !== undefined ? Number(remoteProfile.referralEarnings) : prev.referralEarnings,
+                l1Referrals: remoteProfile.l1Referrals !== undefined ? Number(remoteProfile.l1Referrals) : prev.l1Referrals,
+                l2Referrals: remoteProfile.l2Referrals !== undefined ? Number(remoteProfile.l2Referrals) : prev.l2Referrals,
+                l3Referrals: remoteProfile.l3Referrals !== undefined ? Number(remoteProfile.l3Referrals) : (prev.l3Referrals || 0),
+                l1Earnings: remoteProfile.l1Earnings !== undefined ? Number(remoteProfile.l1Earnings) : (prev.l1Earnings || 0),
+                l2Earnings: remoteProfile.l2Earnings !== undefined ? Number(remoteProfile.l2Earnings) : (prev.l2Earnings || 0),
+                l3Earnings: remoteProfile.l3Earnings !== undefined ? Number(remoteProfile.l3Earnings) : (prev.l3Earnings || 0),
+                teamSize: remoteProfile.teamSize !== undefined ? Number(remoteProfile.teamSize) : (prev.teamSize || 0),
+                teamRecharge: remoteProfile.teamRecharge !== undefined ? Number(remoteProfile.teamRecharge) : (prev.teamRecharge || 0),
                 lastQuantifyTimestamp: effectiveLastTs,
                 nextQuantifyAllowedAt: isCooldownActive ? effectiveNextAllowed : 0,
                 todayQuantifiableCount: isCooldownActive ? 1 : 0,
                 lastQuantifyDate: effectiveLastTs > 0 ? new Date(effectiveLastTs).toISOString() : prev.lastQuantifyDate,
-                referralCode: remoteProfile.referralCode || prev.referralCode,
+                ...(() => {
+                  const { username: effUser, referralCode: effCode } = resolveUsernameAndReferralCode({
+                    username: remoteProfile.username || prev.username,
+                    referralCode: remoteProfile.referralCode || prev.referralCode,
+                    email: fbUser.email || prev.email
+                  });
+                  return {
+                    username: effUser || prev.username,
+                    referralCode: effCode || effUser || prev.referralCode
+                  };
+                })(),
                 sponsorCode: remoteProfile.sponsorCode || prev.sponsorCode,
                 securityPin: remoteProfile.securityPin || prev.securityPin
               };
@@ -888,13 +910,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? Number(remoteProfile.dailyEarningRate) 
         : (matchingTier ? matchingTier.profitRateNum : (effectiveVipLevel > 0 ? 3.0 : 0.0));
 
+      const { username: effUser, referralCode: effCode } = resolveUsernameAndReferralCode({
+        username: remoteProfile?.username || userData.username,
+        referralCode: remoteProfile?.referralCode || userData.referralCode,
+        email: userData.email
+      });
+
+      // Auto-heal any legacy Firestore profile still storing GOLD code
+      if (userData.uid && effCode && (remoteProfile?.referralCode !== effCode || !remoteProfile?.username)) {
+        syncUserProfileToFirestore(userData.uid, {
+          username: effUser,
+          referralCode: effCode
+        }).catch(() => {});
+        registerUserIdentifiersInCloud(userData.uid, userData.email, effUser, effCode).catch(() => {});
+      }
+
       const freshUserState: UserState = {
         ...INITIAL_USER_STATE,
         uid: userData.uid,
         email: userData.email,
-        username: remoteProfile?.username || userData.username || '',
+        username: effUser,
         selectedLanguage: remoteProfile?.selectedLanguage || userState.selectedLanguage || 'en',
-        referralCode: remoteProfile?.referralCode || userData.referralCode || `GOLD${Math.floor(1000 + Math.random() * 9000)}`,
+        referralCode: effCode, // Guaranteed to be username!
         securityPin: remoteProfile?.securityPin || userData.securityPin || '',
         sponsorCode: remoteProfile?.sponsorCode || userData.sponsorCode || '',
         totalBalance: effectiveTotalBalance,
@@ -928,12 +965,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       console.warn('Could not sync remote Firestore profile:', e);
       const effectiveBal = userData.totalBalance ?? 0.00;
+      const { username: fallbackUser, referralCode: fallbackCode } = resolveUsernameAndReferralCode({
+        username: userData.username,
+        referralCode: userData.referralCode,
+        email: userData.email
+      });
       const freshUserState: UserState = {
         ...INITIAL_USER_STATE,
         uid: userData.uid,
         email: userData.email,
-        username: userData.username || '',
-        referralCode: userData.referralCode || `GOLD${Math.floor(1000 + Math.random() * 9000)}`,
+        username: fallbackUser,
+        referralCode: fallbackCode,
         securityPin: userData.securityPin || '',
         sponsorCode: userData.sponsorCode || '',
         totalBalance: effectiveBal,
@@ -1031,6 +1073,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetTierConfig = VIP_TIERS.find(v => v.level === nextVip);
     const nextRate = targetTierConfig ? targetTierConfig.profitRateNum : (nextVip > 0 ? 3.0 : 0.0);
 
+    const nowIso = new Date().toISOString();
     setUserState(prev => ({
       ...prev,
       totalBalance: newTotal,
@@ -1039,7 +1082,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dailyEarningRate: nextRate,
       canClaimFirstDepositBonus: isFirstDeposit,
       firstDepositBonusAmount: isFirstDeposit ? bonusAmount : prev.firstDepositBonusAmount,
-      lockStartDate: prev.lockStartDate || new Date().toISOString().split('T')[0]
+      lockStartDate: prev.lockStartDate || nowIso.split('T')[0],
+      updatedAt: nowIso
     }));
 
     setHistory(prev => prev.map(t => t.id === txId ? { 
@@ -1056,8 +1100,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       vipLevel: nextVip,
       dailyEarningRate: nextRate,
       canClaimFirstDepositBonus: isFirstDeposit,
-      firstDepositBonusAmount: isFirstDeposit ? bonusAmount : userState.firstDepositBonusAmount
+      firstDepositBonusAmount: isFirstDeposit ? bonusAmount : userState.firstDepositBonusAmount,
+      updatedAt: nowIso
     });
+
+    // Distribute multi-tier referral commissions to Level 1 (10%), Level 2 (3%), Level 3 (1%)
+    distributeMultiTierCommission(
+      { 
+        uid: userState.uid, 
+        username: userState.username || userState.referralCode || userState.email || 'member', 
+        email: userState.email 
+      },
+      amount,
+      'deposit'
+    ).catch(err => console.warn('Commission distribution note:', err));
 
     if (userState.soundEnabled) playSuccessSound();
     confetti({ particleCount: 60, spread: 70 });
@@ -1085,22 +1141,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const newWithdrawable = +(userState.withdrawableBalance - amount).toFixed(2);
     const newTotal = +(userState.totalBalance - amount).toFixed(2);
+    const withdrawNow = new Date();
+    const withdrawNowIso = withdrawNow.toISOString();
 
     setUserState(prev => ({
       ...prev,
       totalBalance: newTotal,
-      withdrawableBalance: newWithdrawable
+      withdrawableBalance: newWithdrawable,
+      updatedAt: withdrawNowIso
     }));
 
-    const now = new Date();
-    const dateStr = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`;
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    const fullDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${timeStr}`;
-    const orderId = `ID:TX${now.toISOString().replace(/\D/g, '').slice(2, 18)}`;
+    const dateStr = `${String(withdrawNow.getDate()).padStart(2, '0')}.${String(withdrawNow.getMonth() + 1).padStart(2, '0')}.${withdrawNow.getFullYear()}`;
+    const timeStr = `${String(withdrawNow.getHours()).padStart(2, '0')}:${String(withdrawNow.getMinutes()).padStart(2, '0')}:${String(withdrawNow.getSeconds()).padStart(2, '0')}`;
+    const fullDateStr = `${withdrawNow.getFullYear()}-${String(withdrawNow.getMonth() + 1).padStart(2, '0')}-${String(withdrawNow.getDate()).padStart(2, '0')} ${timeStr}`;
+    const orderId = `ID:TX${withdrawNowIso.replace(/\D/g, '').slice(2, 18)}`;
 
     const newTx: TradeHistoryItem = {
       id: `wd-${Date.now()}`,
-      timestamp: now.toISOString(),
+      timestamp: withdrawNowIso,
       dateStr,
       timeStr,
       fullDateStr,
@@ -1134,7 +1192,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveSystemTransaction(newTx, userState.email, userState.uid);
     syncUserProfileToFirestore(userState.uid, {
       totalBalance: newTotal,
-      withdrawableBalance: newWithdrawable
+      withdrawableBalance: newWithdrawable,
+      updatedAt: withdrawNowIso
     });
 
     if (userState.soundEnabled) playSuccessSound();

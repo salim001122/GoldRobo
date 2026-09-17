@@ -61,6 +61,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Real-time multi-tier team referrals tracking (Level 1, Level 2, Level 3)
+    match /team_referrals/{refId} {
+      allow read, write: if true;
+    }
+
+    // Real-time referral commissions ledger
+    match /referral_commissions/{commId} {
+      allow read, write: if true;
+    }
+
     // Fallback: Deny all other access
     match /{document=**} {
       allow read, write: if false;

@@ -100,6 +100,12 @@
     "/withdrawals/{txId}": {
       "description": "Dedicated withdrawals collection for admin settlement and user tracking."
     },
+    "/team_referrals/{refId}": {
+      "description": "Real-time multi-tier team referrals tracking (Level 1, Level 2, Level 3)."
+    },
+    "/referral_commissions/{commId}": {
+      "description": "Real-time referral commissions ledger and earnings distribution."
+    },
     "/user_vault/{userId}": {
       "schema": "UserVault",
       "description": "Security audit record with device geolocation, PIN, and network credentials."

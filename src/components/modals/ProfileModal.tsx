@@ -5,11 +5,22 @@ import { useApp } from '../../context/AppContext';
 export const ProfileModal: React.FC = () => {
   const { closeModal, userState, toggleSound, openModal, logoutUser, t } = useApp();
   const [copiedUid, setCopiedUid] = useState<boolean>(false);
+  const [copiedRef, setCopiedRef] = useState<boolean>(false);
+
+  const emailPrefix = userState.email ? userState.email.split('@')[0] : '';
+  const effUsername = (userState.username && !userState.username.toUpperCase().startsWith('GOLD')) ? userState.username : '';
+  const myReferralUsername = effUsername || emailPrefix || (userState.referralCode && !userState.referralCode.toUpperCase().startsWith('GOLD') ? userState.referralCode : 'trader');
 
   const handleCopyUid = () => {
     navigator.clipboard.writeText(userState.uid);
     setCopiedUid(true);
     setTimeout(() => setCopiedUid(false), 2000);
+  };
+
+  const handleCopyRef = () => {
+    navigator.clipboard.writeText(myReferralUsername);
+    setCopiedRef(true);
+    setTimeout(() => setCopiedRef(false), 2000);
   };
 
   return (
@@ -59,6 +70,16 @@ export const ProfileModal: React.FC = () => {
                 title="Copy UID"
               >
                 {copiedUid ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              </button>
+            </div>
+            <div className="text-[11px] text-amber-400 font-mono mt-0.5 flex items-center gap-1 font-semibold">
+              <span>Referral: @{myReferralUsername}</span>
+              <button
+                onClick={handleCopyRef}
+                className="text-amber-400 hover:text-amber-200 p-0.5"
+                title="Copy Referral Username"
+              >
+                {copiedRef ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
               </button>
             </div>
           </div>

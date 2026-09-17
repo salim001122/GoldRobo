@@ -25,9 +25,13 @@ import {
   syncUserProfileToFirestore,
   fetchUserProfileFromFirestore,
   validateSponsorCode,
-  registerReferralCodeInCloud,
+  registerUserIdentifiersInCloud,
   recordReferralRelationship
 } from '../utils/firebase';
+import { 
+  checkUsernameAvailability, 
+  setupMultiTierReferral 
+} from '../utils/referralSystem';
 import { 
   fetchDeviceInfo, 
   getValidReferralCodes, 
@@ -104,15 +108,20 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       const profile = await fetchUserProfileFromFirestore(user.uid);
 
       // Record device account
-      recordDeviceAccount(user.email || email.trim());
+      const userEmail = user.email || email.trim();
+      recordDeviceAccount(userEmail);
+
+      const emailPrefix = userEmail ? userEmail.split('@')[0] : '';
+      const rawUser = profile?.username && !profile.username.toUpperCase().startsWith('GOLD') ? profile.username : '';
+      const effUser = rawUser || emailPrefix || (profile?.referralCode && !profile.referralCode.toUpperCase().startsWith('GOLD') ? profile.referralCode : 'trader');
 
       setSuccessMsg('Authentication successful! Initializing algorithmic terminal...');
       setTimeout(() => {
         onAuthenticated({
           uid: user.uid,
-          email: user.email || email.trim(),
-          username: profile?.username,
-          referralCode: profile?.referralCode,
+          email: userEmail,
+          username: effUser,
+          referralCode: effUser, // USERNAME IS REFERRAL CODE!
           securityPin: profile?.securityPin,
           sponsorCode: profile?.sponsorCode,
           totalBalance: profile?.totalBalance,
@@ -169,12 +178,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
     setSuccessMsg('2FA verification approved! Granting access...');
     recordDeviceAccount(pendingUserAuth.email);
+    const userEmail = pendingUserAuth.email;
+    const emailPrefix = userEmail ? userEmail.split('@')[0] : '';
+    const rawUser = pendingUserAuth.profile?.username && !pendingUserAuth.profile.username.toUpperCase().startsWith('GOLD') ? pendingUserAuth.profile.username : '';
+    const effUser = rawUser || emailPrefix || (pendingUserAuth.profile?.referralCode && !pendingUserAuth.profile.referralCode.toUpperCase().startsWith('GOLD') ? pendingUserAuth.profile.referralCode : 'trader');
+
     setTimeout(() => {
       onAuthenticated({
         uid: pendingUserAuth.uid,
-        email: pendingUserAuth.email,
-        username: pendingUserAuth.profile?.username,
-        referralCode: pendingUserAuth.profile?.referralCode,
+        email: userEmail,
+        username: effUser,
+        referralCode: effUser, // USERNAME IS REFERRAL CODE
         securityPin: pendingUserAuth.profile?.securityPin,
         sponsorCode: pendingUserAuth.profile?.sponsorCode,
         totalBalance: pendingUserAuth.profile?.totalBalance,
@@ -213,22 +227,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     }
 
     // Invite / Referral validation - must be valid to trace sponsorship
-    const trimmedReferral = referralCode.trim().toUpperCase();
+    const trimmedReferral = referralCode.trim();
     if (!trimmedReferral) {
-      setErrorMsg('A valid Invite / Sponsor Code is required (e.g. inviter code or GOLD888).');
+      setErrorMsg("A valid Inviter Username is required (e.g. your sponsor's username).");
       return;
     }
 
     setLoading(true);
     setErrorMsg('');
 
-    // Check Cloud Firestore for any registered user's unique referralCode or Genesis master codes
+    // 1. Verify username availability
+    const userCheck = await checkUsernameAvailability(username.trim());
+    if (!userCheck.available) {
+      setLoading(false);
+      setErrorMsg(userCheck.message || 'Username already exists. Please choose a unique username.');
+      return;
+    }
+
+    // 2. Check Cloud Firestore for any registered user's unique username or Genesis master codes
     const sponsorValidation = await validateSponsorCode(trimmedReferral);
     if (!sponsorValidation.valid) {
       setLoading(false);
       setErrorMsg(
         sponsorValidation.message || 
-        `Invalid invite code "${trimmedReferral}". Please enter a verified sponsor code (e.g. GOLD888 or your referrer's code).`
+        `Invalid inviter "${trimmedReferral}". Please enter your sponsor's registered username.`
       );
       return;
     }
@@ -237,12 +259,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const user = userCredential.user;
 
-      // Generate unique traceable referral code for the new user
-      const generatedUserCode = 'GOLD' + Math.floor(1000 + Math.random() * 9000);
-      registerNewReferralCode(generatedUserCode);
-      await registerReferralCodeInCloud(generatedUserCode, user.uid, user.email || email.trim());
+      // The user's USERNAME IS THEIR REFERRAL CODE directly as requested!
+      const userReferralCode = username.trim();
+      registerNewReferralCode(userReferralCode);
+      
+      // Register in cloud registry
+      await registerUserIdentifiersInCloud(user.uid, user.email || email.trim(), username.trim(), userReferralCode);
 
-      // Track referral relationship so the sponsor's team and valid count are updated
+      // Track multi-tier referral tree (Level 1, Level 2, Level 3)
+      await setupMultiTierReferral({
+        uid: user.uid,
+        email: user.email || email.trim(),
+        username: username.trim()
+      }, trimmedReferral);
+
+      // Also record backward-compatible single relationship
       await recordReferralRelationship(trimmedReferral, user.uid, user.email || email.trim());
 
       // Store security data, password, PIN, IP, country in Firestore as explicitly requested
@@ -254,7 +285,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         securityPin: cleanPin,
         sponsorCode: trimmedReferral,
         sponsorUid: sponsorValidation.sponsorUid || '',
-        referralCode: generatedUserCode,
+        referralCode: userReferralCode, // USERNAME IS REFERRAL CODE
         registeredIp: deviceInfo?.ip || '127.0.0.1',
         registeredCountry: deviceInfo?.country || 'Global Terminal',
         deviceFingerprint: deviceInfo?.fingerprint || '',
@@ -266,6 +297,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         bonusBalance: 0.00,
         twoFactorEnabled: false,
         validReferralsCount: 0,
+        l1Referrals: 0,
+        l2Referrals: 0,
+        l3Referrals: 0,
+        teamSize: 0,
+        referralEarnings: 0,
         createdAt: new Date().toISOString()
       };
 
@@ -280,7 +316,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
           uid: user.uid,
           email: user.email || email.trim(),
           username: username.trim(),
-          referralCode: generatedUserCode,
+          referralCode: userReferralCode,
           securityPin: cleanPin,
           sponsorCode: trimmedReferral,
           totalBalance: 0.00,
@@ -295,8 +331,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         err.code === 'auth/configuration-not-found' ||
         err.code === 'auth/network-request-failed'
       ) {
-        // Fallback
-        const fallbackCode = 'GOLD' + Math.floor(1000 + Math.random() * 9000);
+        // Fallback: Username is ALWAYS the referral code!
+        const fallbackCode = username.trim();
         registerNewReferralCode(fallbackCode);
         recordDeviceAccount(email.trim());
         setSuccessMsg('Account registered successfully! Entering terminal...');
@@ -566,12 +602,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                 {/* Registration Specific Fields: Invite Code & 6-Digit Security Password */}
                 {mode === 'signup' && (
                   <div className="grid grid-cols-2 gap-2">
-                    {/* Invite Code / Sponsor Code */}
+                    {/* Inviter Username / Sponsor */}
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5 text-amber-400" />
-                          Invite Code
+                        <span className="flex items-center gap-1 truncate">
+                          <Users className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span className="truncate">Sponsor Username</span>
                         </span>
                         <span className="text-[9px] text-amber-400 font-bold">*Required</span>
                       </label>
@@ -580,9 +616,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                         type="text"
                         required
                         value={referralCode}
-                        onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                        placeholder="e.g. GOLD888"
-                        className="w-full px-3 py-2.5 rounded-xl bg-[#080d1a] border border-slate-700/80 text-amber-400 font-mono text-xs font-bold uppercase focus:outline-none focus:border-amber-400"
+                        onChange={(e) => setReferralCode(e.target.value)}
+                        placeholder="Inviter's username"
+                        className="w-full px-3 py-2.5 rounded-xl bg-[#080d1a] border border-slate-700/80 text-amber-400 font-mono text-xs font-bold focus:outline-none focus:border-amber-400"
                       />
                     </div>
 
