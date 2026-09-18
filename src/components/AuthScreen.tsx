@@ -270,8 +270,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       await setupMultiTierReferral({
         uid: user.uid,
         email: user.email || email.trim(),
-        username: username.trim()
-      }, trimmedReferral);
+        username: username.trim(),
+        vipLevel: 0
+      }, trimmedReferral, sponsorValidation);
 
       // Also record backward-compatible single relationship
       await recordReferralRelationship(trimmedReferral, user.uid, user.email || email.trim());

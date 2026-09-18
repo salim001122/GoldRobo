@@ -15,12 +15,14 @@ import {
   ShieldCheck,
   Layers,
   ListOrdered,
-  ArrowUpRight
+  ArrowUpRight,
+  RefreshCw
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { 
   subscribeToUserTeam, 
   subscribeToUserCommissions, 
+  syncAndRefreshUserTeam,
   TeamStats 
 } from '../../utils/referralSystem';
 import { ReferralMember, ReferralCommissionLog } from '../../types';
@@ -31,6 +33,7 @@ export const InviteModal: React.FC = () => {
   const [selectedLevel, setSelectedLevel] = useState<1 | 2 | 3>(1);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Real-time team state
   const [teamMembers, setTeamMembers] = useState<ReferralMember[]>([]);
@@ -56,13 +59,20 @@ export const InviteModal: React.FC = () => {
   const liveOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://goldrobo.io';
   const inviteLink = `${liveOrigin}/?ref=${encodeURIComponent(myReferralCode)}`;
 
-  // Subscribe to real-time team updates
+  // Subscribe to real-time team updates with user identifier binding
   useEffect(() => {
     if (!userState.uid) return;
-    const unsubTeam = subscribeToUserTeam(userState.uid, (members, stats) => {
-      setTeamMembers(members);
-      setTeamStats(stats);
-    });
+    const unsubTeam = subscribeToUserTeam(
+      userState.uid, 
+      (members, stats) => {
+        setTeamMembers(members);
+        setTeamStats(stats);
+      },
+      {
+        username: cleanUsername,
+        referralCode: myReferralCode
+      }
+    );
 
     const unsubComm = subscribeToUserCommissions(userState.uid, (logs) => {
       setCommissions(logs);
@@ -72,7 +82,24 @@ export const InviteModal: React.FC = () => {
       unsubTeam();
       unsubComm();
     };
-  }, [userState.uid]);
+  }, [userState.uid, cleanUsername, myReferralCode]);
+
+  const handleRefreshTeam = async () => {
+    if (!userState.uid || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const res = await syncAndRefreshUserTeam(userState.uid, {
+        username: cleanUsername,
+        referralCode: myReferralCode
+      });
+      setTeamMembers(res.members);
+      setTeamStats(res.stats);
+    } catch (err) {
+      console.warn('Manual team refresh notice:', err);
+    } finally {
+      setTimeout(() => setIsSyncing(false), 500);
+    }
+  };
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(myReferralCode);
@@ -313,6 +340,22 @@ export const InviteModal: React.FC = () => {
               </div>
             </div>
 
+            <div className="flex items-center justify-between px-1 text-[11px]">
+              <div className="flex items-center gap-1.5 text-emerald-400 font-mono">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Firestore Live Active</span>
+              </div>
+              <button
+                id="btn-sync-team-live"
+                onClick={handleRefreshTeam}
+                disabled={isSyncing}
+                className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 flex items-center gap-1.5 transition-all text-[11px] font-medium active:scale-95 cursor-pointer"
+              >
+                <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin text-amber-400' : ''}`} />
+                <span>{isSyncing ? 'Syncing...' : 'Sync Live Data'}</span>
+              </button>
+            </div>
+
             {/* Level Selector Tabs */}
             <div className="flex items-center gap-1.5 p-1 bg-slate-900/90 rounded-2xl border border-slate-800">
               <button
@@ -407,7 +450,7 @@ export const InviteModal: React.FC = () => {
                             @{member.memberUsername}
                           </span>
                           <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono shrink-0">
-                            VIP {member.vipLevel || 1}
+                            VIP {member.vipLevel !== undefined ? member.vipLevel : 0}
                           </span>
                         </div>
                         <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5 font-mono">

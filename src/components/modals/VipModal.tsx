@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Star, Check, Shield, Zap, Sparkles, Lock, TrendingUp, Calculator, ArrowRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { VIP_TIERS, getVipTierForAmount } from '../../data/mockData';
+import { VIP_TIERS, getVipTierForAmount } from '../../data/constants';
 
 export const VipModal: React.FC = () => {
   const { closeModal, userState, upgradeVipLevel, openModal } = useApp();

@@ -35,7 +35,7 @@ import {
   fetchUserProfileFromFirestore 
 } from '../utils/firebase';
 import { distributeMultiTierCommission } from '../utils/referralSystem';
-import { getVipTierForAmount } from '../data/mockData';
+import { getVipTierForAmount } from '../data/constants';
 import { CoinLogo } from './CoinLogo';
 
 interface AdminPanelProps {

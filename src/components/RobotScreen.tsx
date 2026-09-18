@@ -24,7 +24,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { formatCryptoPrice } from '../utils/cryptoApi';
 import { CoinLogo } from './CoinLogo';
-import { VIP_TIERS } from '../data/mockData';
+import { VIP_TIERS } from '../data/constants';
 
 export const RobotScreen: React.FC = () => {
   const { 

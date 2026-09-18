@@ -9,13 +9,13 @@ import {
   VipTier
 } from '../types';
 import {
-  INITIAL_CREATOR_COINS,
+  REAL_CRYPTO_CURRENCIES as INITIAL_CREATOR_COINS,
   INITIAL_TRADE_HISTORY,
   INITIAL_USER_STATE,
   INITIAL_7D_EARNINGS,
   VIP_TIERS,
   getVipTierForAmount
-} from '../data/mockData';
+} from '../data/constants';
 import { playClickSound, playSuccessSound, playRobotScanningSound } from '../utils/audio';
 import { fetchLiveCryptoPrices, fetchRealKlines } from '../utils/cryptoApi';
 import { 
@@ -30,7 +30,7 @@ import {
   registerUserIdentifiersInCloud
 } from '../utils/firebase';
 import { saveSystemTransaction } from '../utils/adminTransactions';
-import { distributeMultiTierCommission } from '../utils/referralSystem';
+import { distributeMultiTierCommission, syncAndRefreshUserTeam } from '../utils/referralSystem';
 import { getTranslation } from '../utils/translations';
 
 interface AppContextType {
@@ -374,16 +374,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsubscribe();
   }, [userState.uid]);
 
-  // Listener for real-time team referral counts
+  // Listener for real-time team referral counts and multi-tier stats
   useEffect(() => {
     const handleRefUpdated = (e: any) => {
-      const count = e.detail?.validReferralsCount;
-      if (typeof count === 'number') {
-        setUserState(prev => ({
-          ...prev,
-          validReferralsCount: count
-        }));
-      }
+      const detail = e.detail;
+      if (!detail) return;
+      setUserState(prev => ({
+        ...prev,
+        validReferralsCount: typeof detail.validReferralsCount === 'number' ? detail.validReferralsCount : prev.validReferralsCount,
+        l1Referrals: typeof detail.l1Referrals === 'number' ? detail.l1Referrals : prev.l1Referrals,
+        l2Referrals: typeof detail.l2Referrals === 'number' ? detail.l2Referrals : prev.l2Referrals,
+        l3Referrals: typeof detail.l3Referrals === 'number' ? detail.l3Referrals : (prev.l3Referrals || 0),
+        teamSize: typeof detail.teamSize === 'number' ? detail.teamSize : (typeof detail.totalTeamSize === 'number' ? detail.totalTeamSize : prev.teamSize),
+        teamRecharge: typeof detail.teamRecharge === 'number' ? detail.teamRecharge : (typeof detail.totalTeamRecharge === 'number' ? detail.totalTeamRecharge : prev.teamRecharge),
+        referralEarnings: typeof detail.referralEarnings === 'number' ? detail.referralEarnings : (typeof detail.totalCommissionEarned === 'number' ? detail.totalCommissionEarned : prev.referralEarnings),
+        l1Earnings: typeof detail.l1Earnings === 'number' ? detail.l1Earnings : (typeof detail.l1Commission === 'number' ? detail.l1Commission : prev.l1Earnings),
+        l2Earnings: typeof detail.l2Earnings === 'number' ? detail.l2Earnings : (typeof detail.l2Commission === 'number' ? detail.l2Commission : prev.l2Earnings),
+        l3Earnings: typeof detail.l3Earnings === 'number' ? detail.l3Earnings : (typeof detail.l3Commission === 'number' ? detail.l3Commission : prev.l3Earnings)
+      }));
     };
     window.addEventListener('goldrobo_referral_updated', handleRefUpdated);
     return () => window.removeEventListener('goldrobo_referral_updated', handleRefUpdated);
@@ -860,6 +868,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               email: fbUser.email || prev.email
             }));
           }
+
+          // Also trigger real-time team synchronization from Firestore
+          try {
+            syncAndRefreshUserTeam(fbUser.uid, {
+              username: remoteProfile?.username,
+              referralCode: remoteProfile?.referralCode
+            }).catch(() => {});
+          } catch {}
         } catch (err: any) {
           console.warn('Initial auth sync note:', err?.message);
         }
