@@ -347,7 +347,7 @@ export async function validateSponsorCode(input: string): Promise<{
   isMasterCode?: boolean;
   message?: string;
 }> {
-  const clean = (input || '').trim();
+  const clean = (input || '').trim().replace(/^@+/, '');
   if (!clean) {
     return { valid: false, message: 'Please enter an inviter username or referral code.' };
   }
@@ -464,7 +464,10 @@ export async function validateSponsorCode(input: string): Promise<{
       const data = d.data();
       const codeMatch = data.referralCode && data.referralCode.trim().toUpperCase() === cleanUpper;
       const userMatch = data.username && data.username.trim().toLowerCase() === cleanLower;
-      if (codeMatch || userMatch) {
+      const emailMatch = data.email && data.email.trim().toLowerCase() === cleanLower;
+      const emailPrefixMatch = data.email && data.email.split('@')[0].trim().toLowerCase() === cleanLower;
+      const uidMatch = d.id === clean || d.id === cleanLower;
+      if (codeMatch || userMatch || emailMatch || emailPrefixMatch || uidMatch) {
         registerUserIdentifiersInCloud(d.id, data.email, data.username, data.referralCode);
         return {
           valid: true,

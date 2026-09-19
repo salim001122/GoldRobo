@@ -30,7 +30,7 @@ import { ReferralMember, ReferralCommissionLog } from '../../types';
 export const InviteModal: React.FC = () => {
   const { closeModal, userState } = useApp();
   const [activeTab, setActiveTab] = useState<'invite' | 'team' | 'commissions'>('invite');
-  const [selectedLevel, setSelectedLevel] = useState<1 | 2 | 3>(1);
+  const [selectedLevel, setSelectedLevel] = useState<'all' | 1 | 2 | 3>('all');
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -54,8 +54,8 @@ export const InviteModal: React.FC = () => {
 
   // The user's username IS their referral code!
   const emailPrefix = userState.email ? userState.email.split('@')[0] : '';
-  const cleanUsername = (userState.username && !userState.username.toUpperCase().startsWith('GOLD')) ? userState.username : '';
-  const myReferralCode = cleanUsername || emailPrefix || (userState.referralCode && !userState.referralCode.toUpperCase().startsWith('GOLD') ? userState.referralCode : 'trader');
+  const effectiveUsername = (userState.username || '').trim() || (userState.referralCode || '').trim() || emailPrefix || 'trader';
+  const myReferralCode = effectiveUsername;
   const liveOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://goldrobo.io';
   const inviteLink = `${liveOrigin}/?ref=${encodeURIComponent(myReferralCode)}`;
 
@@ -69,7 +69,7 @@ export const InviteModal: React.FC = () => {
         setTeamStats(stats);
       },
       {
-        username: cleanUsername,
+        username: effectiveUsername,
         referralCode: myReferralCode
       }
     );
@@ -82,14 +82,14 @@ export const InviteModal: React.FC = () => {
       unsubTeam();
       unsubComm();
     };
-  }, [userState.uid, cleanUsername, myReferralCode]);
+  }, [userState.uid, effectiveUsername, myReferralCode]);
 
   const handleRefreshTeam = async () => {
     if (!userState.uid || isSyncing) return;
     setIsSyncing(true);
     try {
       const res = await syncAndRefreshUserTeam(userState.uid, {
-        username: cleanUsername,
+        username: effectiveUsername,
         referralCode: myReferralCode
       });
       setTeamMembers(res.members);
@@ -114,7 +114,9 @@ export const InviteModal: React.FC = () => {
   };
 
   // Filter members by selected level
-  const filteredMembers = teamMembers.filter(m => m.level === selectedLevel);
+  const filteredMembers = selectedLevel === 'all'
+    ? teamMembers
+    : teamMembers.filter(m => (Number(m.level) === 2 ? 2 : (Number(m.level) === 3 ? 3 : 1)) === selectedLevel);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
@@ -357,44 +359,62 @@ export const InviteModal: React.FC = () => {
             </div>
 
             {/* Level Selector Tabs */}
-            <div className="flex items-center gap-1.5 p-1 bg-slate-900/90 rounded-2xl border border-slate-800">
+            <div className="grid grid-cols-4 gap-1 p-1 bg-slate-900/90 rounded-2xl border border-slate-800">
               <button
+                id="tab-level-all"
+                onClick={() => setSelectedLevel('all')}
+                className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                  selectedLevel === 'all'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>All</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-950/20 font-black">
+                  {teamStats.totalTeamSize}
+                </span>
+              </button>
+
+              <button
+                id="tab-level-1"
                 onClick={() => setSelectedLevel(1)}
-                className={`flex-1 py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                   selectedLevel === 1
                     ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <span>Level 1</span>
+                <span>L1</span>
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-950/20 font-black">
                   {teamStats.l1Count}
                 </span>
               </button>
 
               <button
+                id="tab-level-2"
                 onClick={() => setSelectedLevel(2)}
-                className={`flex-1 py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                   selectedLevel === 2
                     ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <span>Level 2</span>
+                <span>L2</span>
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-950/20 font-black">
                   {teamStats.l2Count}
                 </span>
               </button>
 
               <button
+                id="tab-level-3"
                 onClick={() => setSelectedLevel(3)}
-                className={`flex-1 py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                   selectedLevel === 3
                     ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <span>Level 3</span>
+                <span>L3</span>
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-950/20 font-black">
                   {teamStats.l3Count}
                 </span>
@@ -403,12 +423,13 @@ export const InviteModal: React.FC = () => {
 
             {/* Level Description Bar */}
             <div className="flex items-center justify-between text-[11px] px-1 text-slate-400">
-              <span>
+              <span className="truncate pr-2">
+                {selectedLevel === 'all' && 'All Multi-Tier Team Network (Levels 1, 2 & 3)'}
                 {selectedLevel === 1 && 'Level 1: Direct Invitees (10% Deposit Rebate • 8% Quantify)'}
                 {selectedLevel === 2 && 'Level 2: Secondary Network (3% Rebate)'}
                 {selectedLevel === 3 && 'Level 3: Indirect Network (1% Rebate)'}
               </span>
-              <span className="text-amber-400 font-mono font-bold">
+              <span className="text-amber-400 font-mono font-bold shrink-0">
                 {filteredMembers.length} Member{filteredMembers.length !== 1 ? 's' : ''}
               </span>
             </div>
@@ -419,59 +440,78 @@ export const InviteModal: React.FC = () => {
                 <div className="p-6 rounded-2xl bg-[#070b14] border border-slate-800 text-center space-y-2">
                   <UserCheck className="w-8 h-8 text-slate-600 mx-auto" />
                   <p className="text-xs text-slate-300 font-medium">
-                    No Level {selectedLevel} members yet.
+                    {selectedLevel === 'all' ? 'No team members registered yet.' : `No Level ${selectedLevel} members yet.`}
                   </p>
                   <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
-                    {selectedLevel === 1 
-                      ? 'Share your username or invite link with friends to start building your Level 1 direct team.'
-                      : 'When your Level ' + (selectedLevel - 1) + ' members invite traders, they will automatically appear here in real time.'}
+                    {selectedLevel === 'all' || selectedLevel === 1
+                      ? 'Share your username or invite link with traders to start building your live direct team.'
+                      : `When your Level ${typeof selectedLevel === 'number' ? selectedLevel - 1 : 1} members invite traders, they will automatically appear here in real time.`}
                   </p>
                   <button
                     onClick={() => setActiveTab('invite')}
-                    className="mt-1 px-4 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-bold border border-amber-500/40 inline-flex items-center gap-1 transition-all"
+                    className="mt-1 px-4 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-bold border border-amber-500/40 inline-flex items-center gap-1 transition-all cursor-pointer"
                   >
-                    <span>Share My Code</span>
+                    <span>Share My Code ({myReferralCode})</span>
                     <ArrowUpRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ) : (
-                filteredMembers.map((member) => (
-                  <div 
-                    key={member.id}
-                    className="p-3 rounded-2xl bg-[#070b14] border border-slate-800/90 hover:border-slate-700 transition-colors flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-xl bg-slate-800 text-amber-400 font-black flex items-center justify-center text-xs font-mono shrink-0 border border-slate-700">
-                        {member.memberUsername ? member.memberUsername.slice(0, 2).toUpperCase() : 'TR'}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-bold text-white truncate font-mono">
-                            @{member.memberUsername}
-                          </span>
-                          <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono shrink-0">
-                            VIP {member.vipLevel !== undefined ? member.vipLevel : 0}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5 font-mono">
-                          <span>Joined: {new Date(member.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                          {member.level > 1 && member.directInviterUsername && (
-                            <span className="text-slate-500">via @{member.directInviterUsername}</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                filteredMembers.map((member) => {
+                  const mLevel = Number(member.level) === 2 ? 2 : (Number(member.level) === 3 ? 3 : 1);
+                  const safeDateStr = member.joinedAt 
+                    ? (isNaN(new Date(member.joinedAt).getTime()) ? 'Recently' : new Date(member.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))
+                    : 'Recently';
 
-                    <div className="text-right shrink-0">
-                      <div className="text-xs font-mono font-bold text-white">
-                        ${(member.totalDeposit || 0).toFixed(2)} <span className="text-[10px] text-slate-400">USDT</span>
+                  return (
+                    <div 
+                      key={member.id}
+                      className="p-3 rounded-2xl bg-[#070b14] border border-slate-800/90 hover:border-slate-700 transition-colors flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-slate-800 text-amber-400 font-black flex items-center justify-center text-xs font-mono shrink-0 border border-slate-700">
+                          {member.memberUsername ? member.memberUsername.slice(0, 2).toUpperCase() : 'TR'}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-white truncate font-mono">
+                              @{member.memberUsername || 'trader'}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-mono shrink-0 border ${
+                              mLevel === 1 
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' 
+                                : mLevel === 2 
+                                ? 'bg-sky-500/20 text-sky-300 border-sky-500/30' 
+                                : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                            }`}>
+                              Level {mLevel}
+                            </span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-mono shrink-0">
+                              VIP {member.vipLevel !== undefined ? member.vipLevel : 0}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5 font-mono flex-wrap">
+                            <span>Joined: {safeDateStr}</span>
+                            {mLevel > 1 && member.directInviterUsername && (
+                              <span className="text-slate-500">via @{member.directInviterUsername}</span>
+                            )}
+                            {member.memberEmail && member.memberEmail !== member.memberUsername && (
+                              <span className="text-slate-500 truncate max-w-[120px]">({member.memberEmail})</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-[10px] font-mono font-bold text-emerald-400 mt-0.5">
-                        +${(member.commissionEarned || 0).toFixed(2)} earned
+
+                      <div className="text-right shrink-0">
+                        <div className="text-xs font-mono font-bold text-white">
+                          ${(member.totalDeposit || 0).toFixed(2)} <span className="text-[10px] text-slate-400">USDT</span>
+                        </div>
+                        <div className="text-[10px] font-mono font-bold text-emerald-400 mt-0.5">
+                          +${(member.commissionEarned || 0).toFixed(2)} earned
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>

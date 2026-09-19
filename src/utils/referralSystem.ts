@@ -1,4 +1,4 @@
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { 
   doc, 
   setDoc, 
@@ -59,7 +59,7 @@ export async function resolveSponsorAccount(
   isGenesis?: boolean;
 } | null> {
   if (!sponsorInput) return null;
-  const clean = sponsorInput.trim();
+  const clean = sponsorInput.trim().replace(/^@+/, '');
   const cleanLower = clean.toLowerCase();
   const cleanUpper = clean.toUpperCase();
 
@@ -173,7 +173,9 @@ export async function resolveSponsorAccount(
       const uMatch = data.username && data.username.trim().toLowerCase() === cleanLower;
       const rMatch = data.referralCode && data.referralCode.trim().toLowerCase() === cleanLower;
       const eMatch = data.email && data.email.trim().toLowerCase() === cleanLower;
-      if (uMatch || rMatch || eMatch) {
+      const epMatch = data.email && data.email.split('@')[0].trim().toLowerCase() === cleanLower;
+      const uidMatch = d.id === clean || d.id.toLowerCase() === cleanLower;
+      if (uMatch || rMatch || eMatch || epMatch || uidMatch) {
         return {
           sponsorUid: d.id,
           sponsorUsername: data.username || clean,
@@ -803,138 +805,275 @@ export async function reconcileTeamWithFirestoreUsers(
     };
   }
 
-  const cleanUser = (userIdentifiers?.username || '').trim().toLowerCase();
-  const cleanCode = (userIdentifiers?.referralCode || '').trim().toLowerCase();
-
   const membersMap = new Map<string, ReferralMember>();
+
+  // Fetch all users from Firestore
+  let allUsers: any[] = [];
+  try {
+    const usersCol = collection(db, 'users');
+    const allUsersSnap = await getDocs(usersCol);
+    allUsersSnap.forEach(d => {
+      allUsers.push({ id: d.id, ...d.data() });
+    });
+  } catch (err: any) {
+    console.warn('Fetch all users notice:', err?.message);
+  }
+
+  // Find authoritative current user document in allUsers
+  const cleanPassedUser = (userIdentifiers?.username || '').trim().toLowerCase().replace(/^@+/, '');
+  const cleanPassedCode = (userIdentifiers?.referralCode || '').trim().toLowerCase().replace(/^@+/, '');
+
+  const myDoc = allUsers.find(u => 
+    u.id === userUid || 
+    (cleanPassedUser && u.username && u.username.trim().toLowerCase() === cleanPassedUser) ||
+    (cleanPassedCode && u.referralCode && u.referralCode.trim().toLowerCase() === cleanPassedCode)
+  );
+
+  const myCanonicalUsername = myDoc?.username || userIdentifiers?.username || (myDoc?.email ? myDoc.email.split('@')[0] : 'sponsor');
+
+  // Build comprehensive aliases set for the current sponsor
+  const myAliases = new Set<string>();
+  myAliases.add(userUid.toLowerCase());
+  if (myDoc?.id) myAliases.add(myDoc.id.toLowerCase());
+  if (myDoc?.username) {
+    const u = myDoc.username.trim().toLowerCase().replace(/^@+/, '');
+    myAliases.add(u);
+    myAliases.add(`@${u}`);
+  }
+  if (myDoc?.referralCode) {
+    const r = myDoc.referralCode.trim().toLowerCase().replace(/^@+/, '');
+    myAliases.add(r);
+  }
+  if (myDoc?.email) {
+    const e = myDoc.email.trim().toLowerCase();
+    myAliases.add(e);
+    const ep = e.split('@')[0];
+    myAliases.add(ep);
+  }
+  if (cleanPassedUser) {
+    myAliases.add(cleanPassedUser);
+    myAliases.add(`@${cleanPassedUser}`);
+  }
+  if (cleanPassedCode) {
+    myAliases.add(cleanPassedCode);
+  }
+  if (auth.currentUser?.email) {
+    const ae = auth.currentUser.email.trim().toLowerCase();
+    myAliases.add(ae);
+    myAliases.add(ae.split('@')[0]);
+  }
 
   // 1. Read existing records from team_referrals collection
   try {
-    const q1 = query(collection(db, 'team_referrals'), where('sponsorUid', '==', userUid));
-    const snap1 = await getDocs(q1);
-    snap1.forEach(d => {
+    const teamCol = collection(db, 'team_referrals');
+    const teamSnap = await getDocs(teamCol);
+    teamSnap.forEach(d => {
       const m = d.data() as ReferralMember;
-      membersMap.set(`${m.memberUid}_L${m.level}`, m);
+      const spUid = (m.sponsorUid || '').trim().toLowerCase();
+      const spUser = (m.sponsorUsername || '').trim().toLowerCase().replace(/^@+/, '');
+      const isMatch = myAliases.has(spUid) || myAliases.has(spUser) || m.sponsorUid === userUid;
+      if (isMatch) {
+        const normLevel = (Number(m.level) === 2) ? 2 : ((Number(m.level) === 3) ? 3 : 1);
+        membersMap.set(`${m.memberUid}_L${normLevel}`, {
+          ...m,
+          level: normLevel
+        });
+      }
     });
-
-    if (cleanUser) {
-      const qUser = query(collection(db, 'team_referrals'), where('sponsorUsername', '==', cleanUser));
-      const snapUser = await getDocs(qUser);
-      snapUser.forEach(d => {
-        const m = d.data() as ReferralMember;
-        membersMap.set(`${m.memberUid}_L${m.level}`, m);
-      });
-    }
   } catch (err: any) {
     console.warn('Read team_referrals notice:', err?.message);
   }
 
-  // 2. Query the real live users collection in Firestore
+  // 2. Read direct referrals from users/{userUid}/referrals subcollection
   try {
-    const usersCol = collection(db, 'users');
-    const allUsersSnap = await getDocs(usersCol);
-    const allUsers: any[] = [];
-    allUsersSnap.forEach(d => {
-      allUsers.push({ id: d.id, ...d.data() });
+    const subCol = collection(db, 'users', userUid, 'referrals');
+    const subSnap = await getDocs(subCol);
+    subSnap.forEach(d => {
+      const subData = d.data();
+      const memberUid = subData.uid || d.id;
+      const key = `${memberUid}_L1`;
+      if (!membersMap.has(key)) {
+        membersMap.set(key, {
+          id: `${userUid}_${memberUid}_L1`,
+          sponsorUid: userUid,
+          sponsorUsername: myCanonicalUsername,
+          memberUid: memberUid,
+          memberUsername: subData.username || subData.email?.split('@')[0] || 'member',
+          memberEmail: subData.email || '',
+          level: 1,
+          directInviterUsername: myCanonicalUsername,
+          joinedAt: subData.joinedAt || new Date().toISOString(),
+          joinedTimestamp: subData.joinedAt ? new Date(subData.joinedAt).getTime() : Date.now(),
+          totalDeposit: Number(subData.totalDeposit || 0),
+          commissionEarned: 0,
+          status: 'Active',
+          vipLevel: Number(subData.vipLevel || 0)
+        });
+      }
     });
+  } catch (err: any) {
+    console.warn('Subcollection referrals notice:', err?.message);
+  }
 
-    // Level 1: Users who registered with this user as sponsor
-    const l1Users: any[] = [];
-    for (const u of allUsers) {
-      if (u.id === userUid) continue; // Skip self
-      const spUidMatch = u.sponsorUid && u.sponsorUid === userUid;
-      const spCode = (u.sponsorCode || '').trim().toLowerCase();
-      const spCodeMatch = cleanUser && spCode === cleanUser;
-      const spRefMatch = cleanCode && spCode === cleanCode;
+  // 3. Scan allUsers to dynamically build multi-tier relationships (Level 1, 2, 3)
+  const otherUsers = allUsers.filter(u => u.id !== userUid && !myAliases.has(u.id.toLowerCase()));
 
-      if (spUidMatch || spCodeMatch || spRefMatch) {
-        l1Users.push(u);
+  // Function to test if a candidate user was sponsored by any alias in an alias set
+  const isSponsoredBy = (candidate: any, sponsorAliases: Set<string>): boolean => {
+    const candidateFields = [
+      candidate.sponsorUid,
+      candidate.sponsorId,
+      candidate.sponsor,
+      candidate.referredBy,
+      candidate.invitedBy,
+      candidate.sponsorCode,
+      candidate.invitedByCode,
+      candidate.refCode,
+      candidate.referralSponsor
+    ];
+
+    for (const val of candidateFields) {
+      if (!val || typeof val !== 'string') continue;
+      const clean = val.trim().toLowerCase();
+      if (!clean) continue;
+      if (sponsorAliases.has(clean)) return true;
+      const withoutAt = clean.replace(/^@+/, '');
+      if (sponsorAliases.has(withoutAt)) return true;
+      if (clean.includes('@')) {
+        const prefix = clean.split('@')[0];
+        if (sponsorAliases.has(prefix)) return true;
       }
     }
+    return false;
+  };
 
-    const l1Uids = new Set(l1Users.map(u => u.id));
-    const l1Names = new Set(l1Users.map(u => (u.username || '').trim().toLowerCase()).filter(Boolean));
-
-    // Level 2: Users invited by any Level 1 member
-    const l2Users: any[] = [];
-    for (const u of allUsers) {
-      if (u.id === userUid || l1Uids.has(u.id)) continue;
-      const spUidMatch = u.sponsorUid && l1Uids.has(u.sponsorUid);
-      const spCode = (u.sponsorCode || '').trim().toLowerCase();
-      const spCodeMatch = spCode && l1Names.has(spCode);
-
-      if (spUidMatch || spCodeMatch) {
-        l2Users.push(u);
+  // Helper to extract all aliases for a group of users
+  const extractGroupAliases = (users: any[]): Set<string> => {
+    const aliases = new Set<string>();
+    for (const u of users) {
+      if (u.id) aliases.add(u.id.toLowerCase());
+      if (u.username) {
+        const un = u.username.trim().toLowerCase().replace(/^@+/, '');
+        aliases.add(un);
+        aliases.add(`@${un}`);
+      }
+      if (u.referralCode) {
+        const rc = u.referralCode.trim().toLowerCase().replace(/^@+/, '');
+        aliases.add(rc);
+        aliases.add(`@${rc}`);
+      }
+      if (u.email) {
+        const em = u.email.trim().toLowerCase();
+        aliases.add(em);
+        aliases.add(em.split('@')[0]);
       }
     }
+    return aliases;
+  };
 
-    const l2Uids = new Set(l2Users.map(u => u.id));
-    const l2Names = new Set(l2Users.map(u => (u.username || '').trim().toLowerCase()).filter(Boolean));
-
-    // Level 3: Users invited by any Level 2 member
-    const l3Users: any[] = [];
-    for (const u of allUsers) {
-      if (u.id === userUid || l1Uids.has(u.id) || l2Uids.has(u.id)) continue;
-      const spUidMatch = u.sponsorUid && l2Uids.has(u.sponsorUid);
-      const spCode = (u.sponsorCode || '').trim().toLowerCase();
-      const spCodeMatch = spCode && l2Names.has(spCode);
-
-      if (spUidMatch || spCodeMatch) {
-        l3Users.push(u);
-      }
+  // Level 1: Users directly sponsored by this user
+  const l1Users: any[] = [];
+  for (const u of otherUsers) {
+    if (isSponsoredBy(u, myAliases)) {
+      l1Users.push(u);
     }
+  }
 
-    // Helper to process and auto-backfill into Firestore team_referrals
-    const processMember = async (u: any, level: 1 | 2 | 3, directInviter: string) => {
-      const key = `${u.id}_L${level}`;
-      const existing = membersMap.get(key);
-      const memberRecord: ReferralMember = {
-        id: `${userUid}_${u.id}_L${level}`,
-        sponsorUid: userUid,
-        sponsorUsername: userIdentifiers?.username || 'sponsor',
-        memberUid: u.id,
-        memberUsername: u.username || u.email?.split('@')[0] || 'member',
-        memberEmail: u.email || '',
-        level,
-        directInviterUsername: directInviter,
-        joinedAt: u.createdAt || new Date().toISOString(),
-        joinedTimestamp: u.createdAt ? new Date(u.createdAt).getTime() : Date.now(),
-        totalDeposit: Number(u.totalDeposit || (u.totalBalance > 0 ? u.totalBalance : 0)),
-        commissionEarned: existing?.commissionEarned || 0,
-        status: 'Active',
-        vipLevel: Number(u.vipLevel || 0)
-      };
+  const l1Uids = new Set(l1Users.map(u => u.id));
+  const l1Aliases = extractGroupAliases(l1Users);
 
-      membersMap.set(key, memberRecord);
+  // Level 2: Users sponsored by any Level 1 member
+  const l2Users: any[] = [];
+  for (const u of otherUsers) {
+    if (l1Uids.has(u.id)) continue;
+    if (isSponsoredBy(u, l1Aliases)) {
+      l2Users.push(u);
+    }
+  }
 
-      // Backfill to Firestore team_referrals if not present
-      try {
-        await setDoc(doc(db, 'team_referrals', memberRecord.id), memberRecord, { merge: true });
-      } catch {}
+  const l2Uids = new Set(l2Users.map(u => u.id));
+  const l2Aliases = extractGroupAliases(l2Users);
+
+  // Level 3: Users sponsored by any Level 2 member
+  const l3Users: any[] = [];
+  for (const u of otherUsers) {
+    if (l1Uids.has(u.id) || l2Uids.has(u.id)) continue;
+    if (isSponsoredBy(u, l2Aliases)) {
+      l3Users.push(u);
+    }
+  }
+
+  // Helper to process and auto-backfill into Firestore team_referrals
+  const processMember = async (u: any, level: 1 | 2 | 3, directInviter: string) => {
+    const key = `${u.id}_L${level}`;
+    const existing = membersMap.get(key);
+    const userBalance = Number(u.totalBalance || 0);
+    const userDeposit = Number(u.totalDeposit || (userBalance > 0 ? userBalance : 0));
+    const userVip = u.vipLevel !== undefined ? Number(u.vipLevel) : (userDeposit >= 10 || userBalance >= 10 ? 1 : 0);
+
+    const memberRecord: ReferralMember = {
+      id: `${userUid}_${u.id}_L${level}`,
+      sponsorUid: userUid,
+      sponsorUsername: myCanonicalUsername,
+      memberUid: u.id,
+      memberUsername: u.username || u.email?.split('@')[0] || 'trader_' + u.id.slice(0, 5),
+      memberEmail: u.email || '',
+      level,
+      directInviterUsername: directInviter,
+      joinedAt: u.createdAt || existing?.joinedAt || new Date().toISOString(),
+      joinedTimestamp: u.createdAt ? new Date(u.createdAt).getTime() : (existing?.joinedTimestamp || Date.now()),
+      totalDeposit: userDeposit,
+      commissionEarned: existing?.commissionEarned || 0,
+      status: 'Active',
+      vipLevel: userVip
     };
 
-    // Process all verified members
-    for (const u of l1Users) {
-      await processMember(u, 1, userIdentifiers?.username || 'You');
-    }
+    membersMap.set(key, memberRecord);
 
-    for (const u of l2Users) {
-      const directInviterUser = l1Users.find(l1 => l1.id === u.sponsorUid || (l1.username && l1.username.trim().toLowerCase() === (u.sponsorCode || '').trim().toLowerCase()));
-      const inviterName = directInviterUser?.username || u.sponsorCode || 'L1 Member';
-      await processMember(u, 2, inviterName);
-    }
+    // Backfill to Firestore team_referrals if not present
+    try {
+      await setDoc(doc(db, 'team_referrals', memberRecord.id), memberRecord, { merge: true });
+    } catch {}
+  };
 
-    for (const u of l3Users) {
-      const directInviterUser = l2Users.find(l2 => l2.id === u.sponsorUid || (l2.username && l2.username.trim().toLowerCase() === (u.sponsorCode || '').trim().toLowerCase()));
-      const inviterName = directInviterUser?.username || u.sponsorCode || 'L2 Member';
-      await processMember(u, 3, inviterName);
-    }
+  // Process all Level 1, 2, 3 members
+  for (const u of l1Users) {
+    await processMember(u, 1, myCanonicalUsername);
+  }
 
-  } catch (err: any) {
-    console.warn('Reconciliation scan notice:', err?.message);
+  for (const u of l2Users) {
+    const parentL1 = l1Users.find(l1 => isSponsoredBy(u, extractGroupAliases([l1])));
+    const inviterName = parentL1?.username || u.sponsorCode || 'L1 Member';
+    await processMember(u, 2, inviterName);
+  }
+
+  for (const u of l3Users) {
+    const parentL2 = l2Users.find(l2 => isSponsoredBy(u, extractGroupAliases([l2])));
+    const inviterName = parentL2?.username || u.sponsorCode || 'L2 Member';
+    await processMember(u, 3, inviterName);
+  }
+
+  // Enrich any members loaded from team_referrals/subcollections with live data from allUsers
+  for (const [key, mem] of membersMap.entries()) {
+    const liveUser = allUsers.find(u => u.id === mem.memberUid);
+    if (liveUser) {
+      const ub = Number(liveUser.totalBalance || 0);
+      const ud = Number(liveUser.totalDeposit || (ub > 0 ? ub : 0));
+      membersMap.set(key, {
+        ...mem,
+        memberUsername: liveUser.username || mem.memberUsername || (liveUser.email ? liveUser.email.split('@')[0] : 'member'),
+        memberEmail: liveUser.email || mem.memberEmail || '',
+        totalDeposit: ud > 0 ? ud : (mem.totalDeposit || 0),
+        vipLevel: liveUser.vipLevel !== undefined ? Number(liveUser.vipLevel) : (mem.vipLevel || 0)
+      });
+    }
   }
 
   const allMembersList = Array.from(membersMap.values());
+  // Normalize levels to strictly 1, 2, or 3
+  for (const m of allMembersList) {
+    m.level = (Number(m.level) === 2) ? 2 : ((Number(m.level) === 3) ? 3 : 1);
+  }
   allMembersList.sort((a, b) => (b.joinedTimestamp || 0) - (a.joinedTimestamp || 0));
 
   // Compute live real stats
@@ -942,10 +1081,10 @@ export async function reconcileTeamWithFirestoreUsers(
   const l2 = allMembersList.filter(m => m.level === 2);
   const l3 = allMembersList.filter(m => m.level === 3);
 
-  const totalTeamRecharge = allMembersList.reduce((sum, m) => sum + (m.totalDeposit || 0), 0);
-  const l1Commission = l1.reduce((sum, m) => sum + (m.commissionEarned || 0), 0);
-  const l2Commission = l2.reduce((sum, m) => sum + (m.commissionEarned || 0), 0);
-  const l3Commission = l3.reduce((sum, m) => sum + (m.commissionEarned || 0), 0);
+  const totalTeamRecharge = allMembersList.reduce((sum, m) => sum + (Number(m.totalDeposit) || 0), 0);
+  const l1Commission = l1.reduce((sum, m) => sum + (Number(m.commissionEarned) || 0), 0);
+  const l2Commission = l2.reduce((sum, m) => sum + (Number(m.commissionEarned) || 0), 0);
+  const l3Commission = l3.reduce((sum, m) => sum + (Number(m.commissionEarned) || 0), 0);
   const totalCommissionEarned = l1Commission + l2Commission + l3Commission;
 
   const stats: TeamStats = {
@@ -969,6 +1108,7 @@ export async function reconcileTeamWithFirestoreUsers(
       teamSize: allMembersList.length,
       validReferralsCount: l1.length,
       teamRecharge: stats.totalTeamRecharge,
+      referralEarnings: stats.totalCommissionEarned,
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch {}
@@ -1037,14 +1177,18 @@ export function subscribeToUserTeam(
   const cacheKey = `goldrobo_team_members_${userUid}`;
 
   function computeAndNotify(members: ReferralMember[]) {
+    // Normalize levels
+    for (const m of members) {
+      m.level = (Number(m.level) === 2) ? 2 : ((Number(m.level) === 3) ? 3 : 1);
+    }
     const l1 = members.filter(m => m.level === 1);
     const l2 = members.filter(m => m.level === 2);
     const l3 = members.filter(m => m.level === 3);
 
-    const totalTeamRecharge = members.reduce((sum, m) => sum + (m.totalDeposit || 0), 0);
-    const l1Commission = l1.reduce((sum, m) => sum + (m.commissionEarned || 0), 0);
-    const l2Commission = l2.reduce((sum, m) => sum + (m.commissionEarned || 0), 0);
-    const l3Commission = l3.reduce((sum, m) => sum + (m.commissionEarned || 0), 0);
+    const totalTeamRecharge = members.reduce((sum, m) => sum + (Number(m.totalDeposit) || 0), 0);
+    const l1Commission = l1.reduce((sum, m) => sum + (Number(m.commissionEarned) || 0), 0);
+    const l2Commission = l2.reduce((sum, m) => sum + (Number(m.commissionEarned) || 0), 0);
+    const l3Commission = l3.reduce((sum, m) => sum + (Number(m.commissionEarned) || 0), 0);
     const totalCommissionEarned = l1Commission + l2Commission + l3Commission;
 
     const stats: TeamStats = {
@@ -1078,16 +1222,10 @@ export function subscribeToUserTeam(
     onUpdate(res.members, res.stats);
   }).catch(() => {});
 
-  // 3. Real-time Firestore onSnapshot listener for changes in team_referrals
-  let unsubscribeSnapshot: () => void = () => {};
+  // 3. Real-time Firestore onSnapshot listener for team_referrals collection
+  let unsubTeamSnap: () => void = () => {};
   try {
-    const teamQuery = query(
-      collection(db, 'team_referrals'),
-      where('sponsorUid', '==', userUid)
-    );
-
-    unsubscribeSnapshot = onSnapshot(teamQuery, () => {
-      // Re-reconcile live team from Firestore
+    unsubTeamSnap = onSnapshot(collection(db, 'team_referrals'), () => {
       reconcileTeamWithFirestoreUsers(userUid, userIdentifiers).then(res => {
         onUpdate(res.members, res.stats);
       }).catch(() => {});
@@ -1098,7 +1236,21 @@ export function subscribeToUserTeam(
     console.warn('Attach team listener notice:', err?.message);
   }
 
-  // 4. Custom event listener for instant local sync
+  // 4. Real-time Firestore onSnapshot listener for users collection (new user registrations)
+  let unsubUsersSnap: () => void = () => {};
+  try {
+    unsubUsersSnap = onSnapshot(collection(db, 'users'), () => {
+      reconcileTeamWithFirestoreUsers(userUid, userIdentifiers).then(res => {
+        onUpdate(res.members, res.stats);
+      }).catch(() => {});
+    }, (err) => {
+      console.warn('Users collection onSnapshot error:', err.message);
+    });
+  } catch (err: any) {
+    console.warn('Attach users listener notice:', err?.message);
+  }
+
+  // 5. Custom event listener for instant local sync
   const handleLocalUpdate = (e: any) => {
     if (e.detail?.sponsorUid === userUid) {
       try {
@@ -1110,7 +1262,8 @@ export function subscribeToUserTeam(
   window.addEventListener('goldrobo_team_updated', handleLocalUpdate);
 
   return () => {
-    unsubscribeSnapshot();
+    unsubTeamSnap();
+    unsubUsersSnap();
     window.removeEventListener('goldrobo_team_updated', handleLocalUpdate);
   };
 }
