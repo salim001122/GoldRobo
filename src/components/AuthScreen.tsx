@@ -74,6 +74,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
   // Device & IP state for security audit
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
+  const [robotEyeBlink, setRobotEyeBlink] = useState<boolean>(false);
+
+  // Robot eye blinking animation cycle (matches Goldrobo RobotScreen)
+  useEffect(() => {
+    const blinkInterval = setInterval(() => {
+      setRobotEyeBlink(true);
+      setTimeout(() => setRobotEyeBlink(false), 200);
+    }, 3500);
+    return () => clearInterval(blinkInterval);
+  }, []);
 
   useEffect(() => {
     fetchDeviceInfo().then((info) => {
@@ -391,10 +401,93 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             <span className="text-white">QUANTITATIVE</span>
           </h1>
 
-          {/* User Requested: No "Firebase" text here, strong institutional text */}
-          <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-            Authorized Institutional Access. Encrypted multi-signature algorithmic trading terminals & cold-storage asset vaults.
-          </p>
+          {/* Animated Goldrobo Character (Matches RobotScreen animations) */}
+          <div className="py-2 flex flex-col items-center justify-center">
+            <div className="relative shrink-0 flex flex-col items-center">
+              <div className="absolute -top-1 w-6 h-6 rounded-full border border-amber-400/50 animate-ping pointer-events-none" />
+              
+              <div className="w-20 h-24 relative flex items-center justify-center animate-[bounce_3s_infinite_ease-in-out]">
+                <svg viewBox="0 0 100 120" className="w-full h-full drop-shadow-[0_0_14px_rgba(234,179,8,0.45)]">
+                  <defs>
+                    <linearGradient id="goldRoboAuthGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#fef08a" />
+                      <stop offset="40%" stopColor="#eab308" />
+                      <stop offset="85%" stopColor="#ca8a04" />
+                      <stop offset="100%" stopColor="#854d0e" />
+                    </linearGradient>
+                    <linearGradient id="plateAuthGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#1e293b" />
+                      <stop offset="100%" stopColor="#0f172a" />
+                    </linearGradient>
+                    <filter id="glowEyesAuth" x="-20%" y="-20%" width="140%" height="140%">
+                      <feDropShadow dx="0" dy="0" stdDeviation="2.5" floodColor="#38bdf8" floodOpacity="0.9"/>
+                    </filter>
+                  </defs>
+
+                  {/* Antenna */}
+                  <line x1="50" y1="24" x2="50" y2="8" stroke="#facc15" strokeWidth="3" strokeLinecap="round" />
+                  <circle cx="50" cy="7" r="4.5" fill="#facc15" className="animate-pulse" />
+                  <circle cx="50" cy="7" r="2" fill="#ffffff" />
+
+                  {/* Ear sensors */}
+                  <rect x="18" y="34" width="6" height="12" rx="3" fill="#ca8a04" stroke="#fef08a" strokeWidth="1" />
+                  <rect x="76" y="34" width="6" height="12" rx="3" fill="#ca8a04" stroke="#fef08a" strokeWidth="1" />
+
+                  {/* Robot Head */}
+                  <rect x="23" y="24" width="54" height="34" rx="12" fill="url(#goldRoboAuthGrad)" stroke="#fef08a" strokeWidth="1.5" />
+
+                  {/* Visor Screen */}
+                  <rect x="28" y="31" width="44" height="19" rx="8" fill="#0b1120" stroke="#38bdf8" strokeWidth="1" />
+
+                  {/* Eyes (Blinking animated state) */}
+                  {robotEyeBlink ? (
+                    <g>
+                      <line x1="36" y1="40" x2="44" y2="40" stroke="#38bdf8" strokeWidth="2.5" strokeLinecap="round" />
+                      <line x1="56" y1="40" x2="64" y2="40" stroke="#38bdf8" strokeWidth="2.5" strokeLinecap="round" />
+                    </g>
+                  ) : (
+                    <g filter="url(#glowEyesAuth)">
+                      <rect x="36" y="36" width="9" height="9" rx="2.5" fill="#38bdf8" />
+                      <circle cx="41" cy="39" r="1.5" fill="#ffffff" />
+                      
+                      <rect x="55" y="36" width="9" height="9" rx="2.5" fill="#38bdf8" />
+                      <circle cx="60" cy="39" r="1.5" fill="#ffffff" />
+                    </g>
+                  )}
+
+                  {/* Neck Joint */}
+                  <rect x="42" y="58" width="16" height="5" rx="2" fill="#64748b" />
+
+                  {/* Robot Body */}
+                  <rect x="26" y="63" width="48" height="36" rx="10" fill="url(#plateAuthGrad)" stroke="url(#goldRoboAuthGrad)" strokeWidth="2" />
+
+                  {/* Chest Power Reactor */}
+                  <circle cx="50" cy="80" r="11" fill="#0f172a" stroke="#eab308" strokeWidth="1.5" />
+                  <circle cx="50" cy="80" r="8" fill="#eab308" opacity="0.3" className="animate-ping" />
+                  <text x="50" y="83" fill="#facc15" fontSize="7" fontWeight="bold" textAnchor="middle" fontFamily="monospace">
+                    3.0%
+                  </text>
+
+                  {/* Arms */}
+                  <path d="M 24 67 Q 16 75 22 84" stroke="url(#goldRoboAuthGrad)" strokeWidth="3.5" fill="none" strokeLinecap="round" />
+                  <path d="M 76 67 Q 84 75 78 84" stroke="url(#goldRoboAuthGrad)" strokeWidth="3.5" fill="none" strokeLinecap="round" />
+
+                  {/* Thruster Jet Flare at bottom */}
+                  <path d="M 40 99 L 50 112 L 60 99 Z" fill="#38bdf8" opacity="0.8" className="animate-pulse" />
+                  <circle cx="50" cy="104" r="3" fill="#ffffff" />
+                </svg>
+              </div>
+
+              {/* Cyan hover glow under thruster */}
+              <div className="w-8 h-1.5 rounded-full bg-cyan-400 blur-sm -mt-0.5 shadow-cyan-400/80 shadow-md" />
+            </div>
+
+            {/* Robot Live Status Pill */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0d162d] border border-amber-500/30 text-amber-300 text-[11px] font-semibold shadow-sm mt-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>AI Quantitative Bot Ready • 3.0% – 6.0% Daily</span>
+            </div>
+          </div>
 
           {/* Supported Asset Ribbons */}
           <div className="flex items-center justify-center gap-2 pt-1">
