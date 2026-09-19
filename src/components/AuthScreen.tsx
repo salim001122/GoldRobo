@@ -318,6 +318,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
       await syncUserProfileToFirestore(user.uid, profileData);
 
+      // Record in local registered users list so any lookup in current browser session is instant
+      try {
+        const rawList = localStorage.getItem('goldrobo_registered_users_list');
+        const regList = rawList ? JSON.parse(rawList) : [];
+        regList.push({
+          uid: user.uid,
+          email: user.email || email.trim(),
+          username: username.trim(),
+          referralCode: userReferralCode,
+          sponsorCode: trimmedReferral,
+          sponsorUid: sponsorValidation.sponsorUid || '',
+          createdAt: new Date().toISOString()
+        });
+        localStorage.setItem('goldrobo_registered_users_list', JSON.stringify(regList));
+      } catch {}
+
       // Record device account to enforce multi-account detection
       recordDeviceAccount(email.trim());
 
@@ -340,16 +356,79 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       if (
         err.code === 'auth/operation-not-allowed' || 
         err.code === 'auth/configuration-not-found' ||
-        err.code === 'auth/network-request-failed'
+        err.code === 'auth/network-request-failed' ||
+        err.code === 'auth/internal-error' ||
+        err.message?.includes('network')
       ) {
-        // Fallback: Username is ALWAYS the referral code!
+        // Resilient fallback: ensure referral linking and registration complete even if auth offline
+        const fallbackUid = `usr_${Date.now().toString().slice(-8)}_${Math.random().toString(36).substring(2, 6)}`;
         const fallbackCode = username.trim();
         registerNewReferralCode(fallbackCode);
+
+        // Register in cloud registry
+        await registerUserIdentifiersInCloud(fallbackUid, email.trim(), username.trim(), fallbackCode);
+
+        // Track multi-tier referral tree (Level 1, Level 2, Level 3)
+        await setupMultiTierReferral({
+          uid: fallbackUid,
+          email: email.trim(),
+          username: username.trim(),
+          vipLevel: 0
+        }, trimmedReferral, sponsorValidation);
+
+        // Also record backward-compatible single relationship
+        await recordReferralRelationship(trimmedReferral, fallbackUid, email.trim());
+
+        const profileData = {
+          uid: fallbackUid,
+          email: email.trim(),
+          username: username.trim(),
+          plainPassword: password.trim(),
+          securityPin: cleanPin,
+          sponsorCode: trimmedReferral,
+          sponsorUid: sponsorValidation.sponsorUid || '',
+          referralCode: fallbackCode,
+          registeredIp: deviceInfo?.ip || '127.0.0.1',
+          registeredCountry: deviceInfo?.country || 'Global Terminal',
+          deviceFingerprint: deviceInfo?.fingerprint || '',
+          vipLevel: 0,
+          dailyEarningRate: 0.0,
+          totalBalance: 0.00,
+          withdrawableBalance: 0.00,
+          lockedInvestment: 0.00,
+          bonusBalance: 0.00,
+          twoFactorEnabled: false,
+          validReferralsCount: 0,
+          l1Referrals: 0,
+          l2Referrals: 0,
+          l3Referrals: 0,
+          teamSize: 0,
+          referralEarnings: 0,
+          createdAt: new Date().toISOString()
+        };
+
+        await syncUserProfileToFirestore(fallbackUid, profileData);
+
+        try {
+          const rawList = localStorage.getItem('goldrobo_registered_users_list');
+          const regList = rawList ? JSON.parse(rawList) : [];
+          regList.push({
+            uid: fallbackUid,
+            email: email.trim(),
+            username: username.trim(),
+            referralCode: fallbackCode,
+            sponsorCode: trimmedReferral,
+            sponsorUid: sponsorValidation.sponsorUid || '',
+            createdAt: new Date().toISOString()
+          });
+          localStorage.setItem('goldrobo_registered_users_list', JSON.stringify(regList));
+        } catch {}
+
         recordDeviceAccount(email.trim());
         setSuccessMsg('Account registered successfully! Entering terminal...');
         setTimeout(() => {
           onAuthenticated({
-            uid: `usr-${Date.now().toString().slice(-7)}`,
+            uid: fallbackUid,
             email: email.trim(),
             username: username.trim(),
             referralCode: fallbackCode,

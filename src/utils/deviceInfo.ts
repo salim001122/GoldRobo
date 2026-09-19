@@ -16,6 +16,10 @@ const KNOWN_REFERRALS_KEY = 'goldrobo_registered_referrals';
 // System Master Sponsor Codes that are always valid
 export const MASTER_SPONSOR_CODES = [
   'GOLD888',
+  'ADMIN888',
+  'SALIM888',
+  'VIP888',
+  'ROOT888',
   'VIP777',
   'QUANT999',
   'ROBO2026',

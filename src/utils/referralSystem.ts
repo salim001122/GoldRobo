@@ -38,7 +38,18 @@ export const REFERRAL_RATES = {
   }
 };
 
-export const MASTER_SPONSOR_CODES = ['GOLD888', 'ADMIN888', 'SALIM888', 'ROOT888', 'VIP888'];
+export const MASTER_SPONSOR_CODES = [
+  'GOLD888',
+  'ADMIN888',
+  'SALIM888',
+  'VIP888',
+  'ROOT888',
+  'VIP777',
+  'QUANT999',
+  'ROBO2026',
+  'ALPHA88',
+  'GOLD8492'
+];
 
 /**
  * Resilient, multi-source resolution of sponsor UID and username from Firestore.
@@ -63,8 +74,8 @@ export async function resolveSponsorAccount(
   const cleanLower = clean.toLowerCase();
   const cleanUpper = clean.toUpperCase();
 
-  // 1. If pre-validated info passed from validateSponsorCode, prioritize it
-  if (knownValidation?.sponsorUid) {
+  // 1. If pre-validated info passed from validateSponsorCode, prioritize it (unless it's a generic placeholder)
+  if (knownValidation?.sponsorUid && knownValidation.sponsorUid !== 'local_cached_sponsor') {
     return {
       sponsorUid: knownValidation.sponsorUid,
       sponsorUsername: knownValidation.sponsorUsername || clean,
@@ -96,7 +107,7 @@ export async function resolveSponsorAccount(
     }
   } catch {}
 
-  // 4. Check usernames collection registry
+  // 4. Check usernames collection registry (direct index)
   try {
     const uSnap = await getDoc(doc(db, 'usernames', cleanLower));
     if (uSnap.exists()) {
@@ -124,6 +135,18 @@ export async function resolveSponsorAccount(
         };
       }
     }
+
+    const rUserSnap = await getDoc(doc(db, 'referral_codes', cleanLower));
+    if (rUserSnap.exists()) {
+      const rUserData = rUserSnap.data();
+      if (rUserData.uid) {
+        return {
+          sponsorUid: rUserData.uid,
+          sponsorUsername: rUserData.username || clean,
+          sponsorEmail: rUserData.email || ''
+        };
+      }
+    }
   } catch {}
 
   // 6. Query users collection in Firestore
@@ -142,7 +165,19 @@ export async function resolveSponsorAccount(
       };
     }
 
-    // 6b. by referralCode uppercase
+    // 6b. by lowercase username
+    const qUserLower = query(usersCol, where('username', '==', cleanLower), limit(1));
+    const sUserLower = await getDocs(qUserLower);
+    if (!sUserLower.empty) {
+      const d = sUserLower.docs[0].data();
+      return {
+        sponsorUid: sUserLower.docs[0].id,
+        sponsorUsername: d.username || clean,
+        sponsorEmail: d.email || ''
+      };
+    }
+
+    // 6c. by referralCode uppercase
     const qRefUpper = query(usersCol, where('referralCode', '==', cleanUpper), limit(1));
     const sRefUpper = await getDocs(qRefUpper);
     if (!sRefUpper.empty) {
@@ -154,7 +189,7 @@ export async function resolveSponsorAccount(
       };
     }
 
-    // 6c. by referralCode exact
+    // 6d. by referralCode exact
     const qRef = query(usersCol, where('referralCode', '==', clean), limit(1));
     const sRef = await getDocs(qRef);
     if (!sRef.empty) {
@@ -166,12 +201,13 @@ export async function resolveSponsorAccount(
       };
     }
 
-    // 6d. Resilient scan across users in Firestore (case-insensitive)
+    // 6e. Resilient scan across users in Firestore (case-insensitive)
     const allUsersSnap = await getDocs(usersCol);
     for (const d of allUsersSnap.docs) {
       const data = d.data();
       const uMatch = data.username && data.username.trim().toLowerCase() === cleanLower;
-      const rMatch = data.referralCode && data.referralCode.trim().toLowerCase() === cleanLower;
+      const rMatch = (data.referralCode && data.referralCode.trim().toLowerCase() === cleanLower) ||
+                     (data.referralCode && data.referralCode.trim().toUpperCase() === cleanUpper);
       const eMatch = data.email && data.email.trim().toLowerCase() === cleanLower;
       const epMatch = data.email && data.email.split('@')[0].trim().toLowerCase() === cleanLower;
       const uidMatch = d.id === clean || d.id.toLowerCase() === cleanLower;
@@ -187,22 +223,59 @@ export async function resolveSponsorAccount(
     console.warn('Sponsor resolution notice:', err?.message);
   }
 
-  // 7. Fallback local device storage (for offline or initial registration)
+  // 7. Fallback local device storage (for offline or local testing)
   try {
-    const rawLocal = localStorage.getItem('goldrobo_device_accounts');
-    if (rawLocal) {
-      const accs = JSON.parse(rawLocal);
-      if (Array.isArray(accs)) {
-        const found = accs.find((a: any) => 
+    const rawUser = localStorage.getItem('goldrobo_user_state');
+    if (rawUser) {
+      const u = JSON.parse(rawUser);
+      if (
+        (u.username && u.username.toLowerCase() === cleanLower) ||
+        (u.referralCode && u.referralCode.toLowerCase() === cleanLower) ||
+        (u.email && u.email.toLowerCase() === cleanLower)
+      ) {
+        return {
+          sponsorUid: u.uid || `usr_sp_${cleanLower}`,
+          sponsorUsername: u.username || clean,
+          sponsorEmail: u.email || ''
+        };
+      }
+    }
+
+    const regUsersRaw = localStorage.getItem('goldrobo_registered_users_list');
+    if (regUsersRaw) {
+      const list = JSON.parse(regUsersRaw);
+      if (Array.isArray(list)) {
+        const found = list.find((a: any) => 
           (a.username && a.username.toLowerCase() === cleanLower) ||
           (a.referralCode && a.referralCode.toLowerCase() === cleanLower) ||
           (a.email && a.email.toLowerCase() === cleanLower)
         );
         if (found) {
           return {
-            sponsorUid: found.uid || `usr-sp-${cleanLower}`,
+            sponsorUid: found.uid || `usr_sp_${cleanLower}`,
             sponsorUsername: found.username || clean,
             sponsorEmail: found.email || ''
+          };
+        }
+      }
+    }
+
+    const rawLocal = localStorage.getItem('goldrobo_device_accounts');
+    if (rawLocal) {
+      const accs = JSON.parse(rawLocal);
+      if (Array.isArray(accs)) {
+        const found = accs.find((a: any) => 
+          (typeof a === 'object' && a.username && a.username.toLowerCase() === cleanLower) ||
+          (typeof a === 'object' && a.referralCode && a.referralCode.toLowerCase() === cleanLower) ||
+          (typeof a === 'object' && a.email && a.email.toLowerCase() === cleanLower) ||
+          (typeof a === 'string' && a.toLowerCase() === cleanLower)
+        );
+        if (found) {
+          const o = typeof found === 'object' ? found : { username: clean };
+          return {
+            sponsorUid: o.uid || `usr_sp_${cleanLower}`,
+            sponsorUsername: o.username || clean,
+            sponsorEmail: o.email || ''
           };
         }
       }
@@ -320,7 +393,7 @@ export async function setupMultiTierReferral(
     };
 
     await saveTeamMemberRecord(l1Record);
-    await incrementSponsorCounts(l1Sponsor.sponsorUid, 1);
+    await incrementSponsorCounts(l1Sponsor.sponsorUid, 1, l1Sponsor.sponsorUsername);
 
     // Also record in sponsor's referrals subcollection for backward-compatibility
     try {
@@ -345,7 +418,7 @@ export async function setupMultiTierReferral(
         const sp1Doc = await getDoc(doc(db, 'users', l1Sponsor.sponsorUid));
         if (sp1Doc.exists()) {
           const sp1Data = sp1Doc.data();
-          const l2Input = sp1Data.sponsorUid || sp1Data.sponsorCode;
+          const l2Input = sp1Data.sponsorUid || sp1Data.sponsorCode || sp1Data.sponsorUsername || sp1Data.invitedBy;
           if (l2Input) {
             l2Sponsor = await resolveSponsorAccount(l2Input);
           }
@@ -374,7 +447,7 @@ export async function setupMultiTierReferral(
         vipLevel: newUser.vipLevel || 0
       };
       await saveTeamMemberRecord(l2Record);
-      await incrementSponsorCounts(l2Sponsor.sponsorUid, 2);
+      await incrementSponsorCounts(l2Sponsor.sponsorUid, 2, l2Sponsor.sponsorUsername);
 
       // 4. Resolve Level 3 Sponsor from Level 2 Sponsor's record
       let l3Sponsor: { sponsorUid: string; sponsorUsername: string; sponsorEmail: string; isGenesis?: boolean } | null = null;
@@ -382,7 +455,7 @@ export async function setupMultiTierReferral(
         const sp2Doc = await getDoc(doc(db, 'users', l2Sponsor.sponsorUid));
         if (sp2Doc.exists()) {
           const sp2Data = sp2Doc.data();
-          const l3Input = sp2Data.sponsorUid || sp2Data.sponsorCode;
+          const l3Input = sp2Data.sponsorUid || sp2Data.sponsorCode || sp2Data.sponsorUsername || sp2Data.invitedBy;
           if (l3Input) {
             l3Sponsor = await resolveSponsorAccount(l3Input);
           }
@@ -410,7 +483,7 @@ export async function setupMultiTierReferral(
           vipLevel: newUser.vipLevel || 0
         };
         await saveTeamMemberRecord(l3Record);
-        await incrementSponsorCounts(l3Sponsor.sponsorUid, 3);
+        await incrementSponsorCounts(l3Sponsor.sponsorUid, 3, l3Sponsor.sponsorUsername);
       }
     }
 
@@ -424,7 +497,7 @@ export async function setupMultiTierReferral(
  * Save team member record to Firestore & Local Cache
  */
 async function saveTeamMemberRecord(record: ReferralMember) {
-  // 1. Save to Firestore
+  // 1. Save to Firestore team_referrals collection
   try {
     const docRef = doc(db, 'team_referrals', record.id);
     await setDoc(docRef, record, { merge: true });
@@ -432,7 +505,22 @@ async function saveTeamMemberRecord(record: ReferralMember) {
     console.warn('Firestore save team member notice:', err?.message);
   }
 
-  // 2. Save to Local cache for sponsor
+  // 2. Also save to sponsor's referrals subcollection for direct Level 1
+  try {
+    if (record.sponsorUid && record.sponsorUid !== 'genesis_sponsor_gold888' && record.level === 1) {
+      await setDoc(doc(db, 'users', record.sponsorUid, 'referrals', record.memberUid), {
+        uid: record.memberUid,
+        email: record.memberEmail,
+        username: record.memberUsername,
+        joinedAt: record.joinedAt,
+        level: record.level,
+        status: record.status || 'Active Member',
+        totalDeposit: record.totalDeposit || 0
+      }, { merge: true });
+    }
+  } catch {}
+
+  // 3. Save to Local cache for sponsor
   try {
     const cacheKey = `goldrobo_team_members_${record.sponsorUid}`;
     const raw = localStorage.getItem(cacheKey);
@@ -455,55 +543,96 @@ async function saveTeamMemberRecord(record: ReferralMember) {
 /**
  * Increment sponsor referral counts in Firestore & Local State
  */
-async function incrementSponsorCounts(sponsorUid: string, level: 1 | 2 | 3) {
+export async function incrementSponsorCounts(sponsorUid: string, level: 1 | 2 | 3, sponsorUsername?: string) {
   if (!sponsorUid || sponsorUid === 'genesis_sponsor_gold888') return;
   try {
-    const userRef = doc(db, 'users', sponsorUid);
-    const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      const curL1 = Number(data.l1Referrals || 0);
-      const curL2 = Number(data.l2Referrals || 0);
-      const curL3 = Number(data.l3Referrals || 0);
+    let targetUid = sponsorUid;
+    let currentData: any = null;
+    let userRef = doc(db, 'users', targetUid);
 
-      const updates: any = {
-        updatedAt: new Date().toISOString()
-      };
-
-      if (level === 1) {
-        updates.l1Referrals = curL1 + 1;
-        updates.validReferralsCount = Number(data.validReferralsCount || 0) + 1;
-        updates.referralCount = Number(data.referralCount || 0) + 1;
-      } else if (level === 2) {
-        updates.l2Referrals = curL2 + 1;
-      } else if (level === 3) {
-        updates.l3Referrals = curL3 + 1;
+    try {
+      const snap = await getDoc(userRef);
+      if (snap.exists()) {
+        currentData = snap.data();
       }
+    } catch {}
 
-      const effectiveL1 = updates.l1Referrals !== undefined ? updates.l1Referrals : curL1;
-      const effectiveL2 = updates.l2Referrals !== undefined ? updates.l2Referrals : curL2;
-      const effectiveL3 = updates.l3Referrals !== undefined ? updates.l3Referrals : curL3;
-      updates.teamSize = effectiveL1 + effectiveL2 + effectiveL3;
-
-      await setDoc(userRef, updates, { merge: true });
-
-      // If this sponsor is active in the current browser, update local state
+    if (!currentData) {
+      // Search by username or referralCode in users collection
       try {
-        const rawUser = localStorage.getItem('goldrobo_user_state');
-        if (rawUser) {
-          const u = JSON.parse(rawUser);
-          if (u.uid === sponsorUid) {
-            u.l1Referrals = effectiveL1;
-            u.l2Referrals = effectiveL2;
-            u.l3Referrals = effectiveL3;
-            u.teamSize = updates.teamSize;
-            if (updates.validReferralsCount) u.validReferralsCount = updates.validReferralsCount;
-            localStorage.setItem('goldrobo_user_state', JSON.stringify(u));
-            window.dispatchEvent(new CustomEvent('goldrobo_referral_updated', { detail: u }));
-          }
+        const usersCol = collection(db, 'users');
+        const qU = query(usersCol, where('username', '==', sponsorUsername || sponsorUid), limit(1));
+        const sU = await getDocs(qU);
+        if (!sU.empty) {
+          targetUid = sU.docs[0].id;
+          currentData = sU.docs[0].data();
+          userRef = doc(db, 'users', targetUid);
         }
       } catch {}
     }
+
+    const curL1 = Number(currentData?.l1Referrals || 0);
+    const curL2 = Number(currentData?.l2Referrals || 0);
+    const curL3 = Number(currentData?.l3Referrals || 0);
+    const curValid = Number(currentData?.validReferralsCount || 0);
+    const curTotal = Number(currentData?.referralCount || currentData?.totalReferralsCount || 0);
+
+    const updates: any = {
+      updatedAt: new Date().toISOString(),
+      lastReferralAt: new Date().toISOString()
+    };
+
+    if (level === 1) {
+      updates.l1Referrals = curL1 + 1;
+      updates.validReferralsCount = curValid + 1;
+      updates.referralCount = curTotal + 1;
+      updates.totalReferralsCount = curTotal + 1;
+    } else if (level === 2) {
+      updates.l2Referrals = curL2 + 1;
+    } else if (level === 3) {
+      updates.l3Referrals = curL3 + 1;
+    }
+
+    const effectiveL1 = updates.l1Referrals !== undefined ? updates.l1Referrals : curL1;
+    const effectiveL2 = updates.l2Referrals !== undefined ? updates.l2Referrals : curL2;
+    const effectiveL3 = updates.l3Referrals !== undefined ? updates.l3Referrals : curL3;
+    updates.teamSize = effectiveL1 + effectiveL2 + effectiveL3;
+
+    await setDoc(userRef, updates, { merge: true });
+
+    // If this sponsor is active in the current browser, update local state
+    try {
+      const rawUser = localStorage.getItem('goldrobo_user_state');
+      if (rawUser) {
+        const u = JSON.parse(rawUser);
+        const isMatch = u.uid === targetUid || 
+          u.uid === sponsorUid || 
+          (sponsorUsername && u.username && u.username.toLowerCase() === sponsorUsername.toLowerCase());
+        if (isMatch) {
+          u.l1Referrals = effectiveL1;
+          u.l2Referrals = effectiveL2;
+          u.l3Referrals = effectiveL3;
+          u.teamSize = updates.teamSize;
+          if (updates.validReferralsCount !== undefined) {
+            u.validReferralsCount = updates.validReferralsCount;
+          }
+          u.referralCount = updates.referralCount || u.referralCount;
+          localStorage.setItem('goldrobo_user_state', JSON.stringify(u));
+          window.dispatchEvent(new CustomEvent('goldrobo_referral_updated', { detail: u }));
+        }
+      }
+    } catch {}
+
+    window.dispatchEvent(new CustomEvent('goldrobo_referral_updated', {
+      detail: {
+        sponsorUid: targetUid,
+        l1Referrals: effectiveL1,
+        l2Referrals: effectiveL2,
+        l3Referrals: effectiveL3,
+        teamSize: updates.teamSize,
+        validReferralsCount: updates.validReferralsCount
+      }
+    }));
   } catch (err: any) {
     console.warn('Increment sponsor counts error:', err?.message);
   }
@@ -819,6 +948,28 @@ export async function reconcileTeamWithFirestoreUsers(
     console.warn('Fetch all users notice:', err?.message);
   }
 
+  // Also include users from local storage if not already in allUsers
+  try {
+    const regRaw = localStorage.getItem('goldrobo_registered_users_list');
+    if (regRaw) {
+      const regList = JSON.parse(regRaw);
+      if (Array.isArray(regList)) {
+        for (const ru of regList) {
+          if (ru.uid && !allUsers.some(u => u.id === ru.uid)) {
+            allUsers.push({ id: ru.uid, ...ru });
+          }
+        }
+      }
+    }
+    const curRaw = localStorage.getItem('goldrobo_user_state');
+    if (curRaw) {
+      const cu = JSON.parse(curRaw);
+      if (cu.uid && !allUsers.some(u => u.id === cu.uid)) {
+        allUsers.push({ id: cu.uid, ...cu });
+      }
+    }
+  } catch {}
+
   // Find authoritative current user document in allUsers
   const cleanPassedUser = (userIdentifiers?.username || '').trim().toLowerCase().replace(/^@+/, '');
   const cleanPassedCode = (userIdentifiers?.referralCode || '').trim().toLowerCase().replace(/^@+/, '');
@@ -924,6 +1075,9 @@ export async function reconcileTeamWithFirestoreUsers(
       candidate.sponsorUid,
       candidate.sponsorId,
       candidate.sponsor,
+      candidate.sponsorUsername,
+      candidate.directInviterUsername,
+      candidate.referrer,
       candidate.referredBy,
       candidate.invitedBy,
       candidate.sponsorCode,
@@ -1099,14 +1253,33 @@ export async function reconcileTeamWithFirestoreUsers(
     l3Commission: parseFloat(l3Commission.toFixed(2))
   };
 
+  const docL1 = Number(myDoc?.l1Referrals || 0);
+  const docL2 = Number(myDoc?.l2Referrals || 0);
+  const docL3 = Number(myDoc?.l3Referrals || 0);
+  const docTeam = Number(myDoc?.teamSize || 0);
+  const docValid = Number(myDoc?.validReferralsCount || 0);
+
+  const effL1 = Math.max(l1.length, docL1);
+  const effL2 = Math.max(l2.length, docL2);
+  const effL3 = Math.max(l3.length, docL3);
+  const effTeam = Math.max(allMembersList.length, docTeam, effL1 + effL2 + effL3);
+  const effValid = Math.max(effL1, docValid);
+
+  stats.l1Count = effL1;
+  stats.l2Count = effL2;
+  stats.l3Count = effL3;
+  stats.totalTeamSize = effTeam;
+
   // Update sponsor document in Firestore users/{userUid} with verified counts
   try {
     await setDoc(doc(db, 'users', userUid), {
-      l1Referrals: l1.length,
-      l2Referrals: l2.length,
-      l3Referrals: l3.length,
-      teamSize: allMembersList.length,
-      validReferralsCount: l1.length,
+      l1Referrals: effL1,
+      l2Referrals: effL2,
+      l3Referrals: effL3,
+      teamSize: effTeam,
+      validReferralsCount: effValid,
+      referralCount: effValid,
+      totalReferralsCount: effValid,
       teamRecharge: stats.totalTeamRecharge,
       referralEarnings: stats.totalCommissionEarned,
       updatedAt: new Date().toISOString()
@@ -1122,11 +1295,11 @@ export async function reconcileTeamWithFirestoreUsers(
   // Dispatch live custom event for reactive UI update
   window.dispatchEvent(new CustomEvent('goldrobo_referral_updated', {
     detail: {
-      validReferralsCount: l1.length,
-      l1Referrals: l1.length,
-      l2Referrals: l2.length,
-      l3Referrals: l3.length,
-      teamSize: allMembersList.length,
+      validReferralsCount: effValid,
+      l1Referrals: effL1,
+      l2Referrals: effL2,
+      l3Referrals: effL3,
+      teamSize: effTeam,
       teamRecharge: stats.totalTeamRecharge,
       referralEarnings: totalCommissionEarned
     }
