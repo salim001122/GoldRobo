@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Globe, RotateCw, ChevronLeft, Info, Bell } from 'lucide-react';
+import { User, Globe, RotateCw, ChevronLeft, Info, Bell, Headphones } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SUPPORTED_LANGUAGES } from '../utils/translations';
 
@@ -89,6 +89,17 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Action Buttons */}
       <div className="flex items-center gap-2">
+        <button
+          id="btn-support-header"
+          onClick={() => openModal('support')}
+          className="relative w-9 h-9 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-amber-400 hover:text-white hover:border-amber-500/50 active:scale-95 transition-all shadow-sm"
+          title={t('help_support', '24/7 VIP Customer Support')}
+          aria-label="Customer Support"
+        >
+          <Headphones className="w-4 h-4" />
+          <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-400 animate-pulse border border-[#080d1a]" />
+        </button>
+
         <button
           id="btn-profile-header"
           onClick={() => openModal('profile')}

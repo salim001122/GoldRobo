@@ -12,6 +12,7 @@ export type ModalType =
   | 'coinInfo'
   | 'quantifyExecution'
   | 'apiKey'
+  | 'support'
   | null;
 
 export type NavigationTab = 'home' | 'robot' | 'assets';

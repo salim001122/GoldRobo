@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, User, Copy, Check, Shield, Volume2, VolumeX, Key, LogOut } from 'lucide-react';
+import { X, User, Copy, Check, Shield, Volume2, VolumeX, Key, LogOut, Headphones } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
 export const ProfileModal: React.FC = () => {
@@ -130,6 +130,32 @@ export const ProfileModal: React.FC = () => {
             </div>
             <span className="text-[10px] font-mono text-emerald-400 font-bold">Enabled</span>
           </div>
+
+          {/* Customer Support */}
+          <button
+            id="btn-support-profile"
+            onClick={() => {
+              closeModal();
+              openModal('support');
+            }}
+            className="w-full p-3 rounded-xl bg-gradient-to-r from-amber-500/15 via-yellow-500/10 to-amber-500/15 border border-amber-500/40 hover:border-amber-400/80 flex items-center justify-between transition-all text-left group cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                <Headphones className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-white group-hover:text-amber-300 transition-colors">
+                  {t('help_support', '24/7 VIP Customer Support')}
+                </div>
+                <div className="text-[10px] text-slate-400">Instant AI answers & Live Agent desk</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-mono font-bold text-emerald-400">Online</span>
+            </div>
+          </button>
 
           {/* Language Switch */}
           <button

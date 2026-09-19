@@ -13,6 +13,7 @@ import { LanguageModal } from './LanguageModal';
 import { CoinInfoModal } from './CoinInfoModal';
 import { QuantifyExecutionModal } from './QuantifyExecutionModal';
 import { ApiKeyModal } from './ApiKeyModal';
+import { SupportModal } from './SupportModal';
 
 export const ModalManager: React.FC = () => {
   const { activeModal } = useApp();
@@ -46,6 +47,8 @@ export const ModalManager: React.FC = () => {
       return <QuantifyExecutionModal />;
     case 'apiKey':
       return <ApiKeyModal />;
+    case 'support':
+      return <SupportModal />;
     default:
       return null;
   }

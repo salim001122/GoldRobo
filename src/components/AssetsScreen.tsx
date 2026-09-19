@@ -1,5 +1,5 @@
 import React from 'react';
-import { Eye, EyeOff, ArrowDownToLine, ArrowUpFromLine, Users, Share2, Sparkles, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, ArrowDownToLine, ArrowUpFromLine, Users, Share2, Sparkles, ShieldCheck, Headphones, ExternalLink } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { CoinLogo } from './CoinLogo';
 
@@ -329,6 +329,48 @@ export const AssetsScreen: React.FC = () => {
           </button>
         </div>
 
+      </div>
+
+      {/* 24/7 Official Support & Telegram Channel Section */}
+      <div className="rounded-2xl bg-[#10182e] border border-slate-800/80 p-4 shadow-xl space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+              <Headphones className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">
+                {t('help_support', '24/7 Official Support')}
+              </h3>
+              <p className="text-[10px] text-slate-400">Live AI Chat & Human Customer Care</p>
+            </div>
+          </div>
+          <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Online
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5 pt-1">
+          <button
+            id="btn-open-support-assets"
+            onClick={() => openModal('support')}
+            className="p-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/15 active:scale-95 transition-all"
+          >
+            <Headphones className="w-4 h-4" />
+            <span>Live Chat</span>
+          </button>
+
+          <a
+            href="https://t.me/GoldRoboSupport"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-sky-500/50 text-sky-400 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+          >
+            <span>Telegram</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
       </div>
 
     </div>

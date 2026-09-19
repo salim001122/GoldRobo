@@ -12,7 +12,9 @@ import {
   TrendingUp,
   TrendingDown,
   ChevronRight,
-  ShieldCheck
+  ShieldCheck,
+  Headphones,
+  MessageCircle
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { CreatorCoin } from '../types';
@@ -176,6 +178,38 @@ export const HomeScreen: React.FC = () => {
           <span className="text-[11px] font-medium text-slate-200 mt-1">{t('records', 'History')}</span>
         </button>
 
+      </div>
+
+      {/* 24/7 VIP Customer Support Interactive Card */}
+      <div 
+        id="banner-customer-support"
+        onClick={() => openModal('support')}
+        className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-r from-[#0d162d] via-[#132042] to-[#0d162d] border border-amber-500/40 hover:border-amber-400/80 shadow-lg shadow-amber-500/10 flex items-center justify-between transition-all active:scale-[0.99] group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 p-0.5 shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
+              <div className="w-full h-full rounded-[10px] bg-[#090f20] flex items-center justify-center">
+                <Headphones className="w-5 h-5 text-amber-400" />
+              </div>
+            </div>
+            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#090f20] animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs sm:text-sm font-extrabold text-white">24/7 VIP Customer Support</span>
+              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                Online
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Live Chat & Instant Auto-Answers for Deposits, Quantify, Withdraw & VIP
+            </p>
+          </div>
+        </div>
+        <div className="w-8 h-8 rounded-full bg-amber-500/10 group-hover:bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 transition-colors">
+          <MessageCircle className="w-4 h-4" />
+        </div>
       </div>
 
       {/* GOLDROBO Main Card */}

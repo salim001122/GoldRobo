@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Headphones } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
@@ -15,7 +16,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
 
 const AppContent: React.FC = () => {
-  const { activeTab, isAuthenticated, loginUser } = useApp();
+  const { activeTab, isAuthenticated, loginUser, openModal } = useApp();
 
   // Check if current route is /panel or #panel
   const checkIsAdminRoute = () => {
@@ -85,6 +86,21 @@ const AppContent: React.FC = () => {
         {activeTab === 'robot' && <RobotScreen />}
         {activeTab === 'assets' && <AssetsScreen />}
       </main>
+
+      {/* Floating 24/7 Customer Support Trigger */}
+      <button
+        id="btn-floating-support"
+        onClick={() => openModal('support')}
+        className="fixed bottom-22 right-4 z-30 flex items-center gap-2 px-3 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold shadow-xl shadow-amber-500/30 border border-amber-300/60 active:scale-95 transition-all group cursor-pointer"
+        title="24/7 VIP Customer Support"
+        aria-label="Customer Support"
+      >
+        <div className="relative flex items-center justify-center">
+          <Headphones className="w-4 h-4 text-slate-950" />
+          <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 animate-pulse" />
+        </div>
+        <span className="text-[11px] font-extrabold tracking-tight">Support</span>
+      </button>
 
       {/* Persistent Bottom Floating Navigation */}
       <BottomNav />
