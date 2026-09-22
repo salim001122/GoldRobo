@@ -138,6 +138,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
     if (res) {
       if (tx.type === 'deposit') {
         const amount = tx.profitAmount || tx.amount || 0;
+
+          if (tx.userUid) {
+        const docKey = (tx.orderId || tx.id).replace(/\//g, '_');
+        await require('firebase/firestore').updateDoc(require('firebase/firestore').doc(db, 'users', tx.userUid, 'transactions', docKey), { status: 'Completed', approvalStatus: 'Completed', paymentStatus: 'Completed' }).catch((e: any) => console.log(e));
+      }
         
         // Update Cloud Firestore document directly so Firebase Console and remote devices update
         if (tx.userUid) {
