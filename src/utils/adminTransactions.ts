@@ -131,7 +131,9 @@ export async function saveSystemTransaction(tx: TradeHistoryItem, userEmail?: st
 export async function fetchSystemTransactionsFromCloud(): Promise<SystemTransaction[]> {
   try {
     const colRef = collection(db, 'system_transactions');
-    const snap = await getDocs(colRef);
+        
+    const snap = await getDocs(query(colRef, orderBy('createdAt', 'desc'), limit(30)));
+
     const cloudTxs: SystemTransaction[] = [];
     snap.forEach((docSnap) => {
       cloudTxs.push({ id: docSnap.id, ...docSnap.data() } as SystemTransaction);
