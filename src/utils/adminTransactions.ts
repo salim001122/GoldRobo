@@ -172,7 +172,9 @@ export function subscribeToSystemTransactionsCloud(
 ): () => void {
   try {
     const colRef = collection(db, 'system_transactions');
-    const unsubscribe = onSnapshot(colRef, (snapshot) => {
+        // Replace "const unsubscribe = onSnapshot(colRef, (snapshot) => {" with this line:
+    const unsubscribe = onSnapshot(query(colRef, orderBy('createdAt', 'desc'), limit(30)), (snapshot) => {
+
       const cloudTxs: SystemTransaction[] = [];
       snapshot.forEach((docSnap) => {
         cloudTxs.push({ id: docSnap.id, ...docSnap.data() } as SystemTransaction);
