@@ -203,6 +203,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit }) => {
     );
 
     if (res) {
+      if (payoutModalTx.userUid) {
+        const docKey = (payoutModalTx.orderId || payoutModalTx.id).replace(/\//g, '_');
+        await require('firebase/firestore').updateDoc(require('firebase/firestore').doc(db, 'users', payoutModalTx.userUid, 'transactions', docKey), { status: 'Completed', approvalStatus: 'Completed', paymentStatus: 'Completed', txHash: hash || '' }).catch((e: any) => console.log(e));
+      }
       await loadTransactions();
       const net = (payoutModalTx.netPayoutAmount || payoutModalTx.actualAmount || Math.abs(payoutModalTx.profitAmount || 0)).toFixed(2);
       const addr = payoutModalTx.withdrawalAddress || payoutModalTx.destinationAddress || 'address';
